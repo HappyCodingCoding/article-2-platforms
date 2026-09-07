@@ -42,7 +42,7 @@ Work every step below in full, in order — do not skip one, merge two into one 
 
 Determine the shape of `--input` (file / body text / topic / existing title) and resolve every option value. List every value that was inferred rather than stated, e.g. `识别为 --mode draft --action share --count 10`.
 
-If `--input` is a file path, read it in full first. If `--input` is a bare topic — one line, no material behind it — do not invent material to compensate. Go to Step 2, mark most brief fields 缺, and carry that limitation into the output at Step 11.
+If `--input` is a file path, read it in full first. If `--mode draft` and the source already carries its own title (a document heading, a page title, a working title at the top of the file), ignore it — do not let it anchor Step 2's brief or bias which triggers or formulas look like the obvious fit. Analyze and draft from the body alone, as if it arrived untitled; this does not apply to `--mode rewrite`, where the existing title is the thing being diagnosed. If `--input` is a bare topic — one line, no material behind it — do not invent material to compensate. Go to Step 2, mark most brief fields 缺, and carry that limitation into the output at Step 11.
 
 ### Step 2 — Build the content brief
 
