@@ -37,15 +37,17 @@ Never report a total by feel. Score each dimension, then add.
 - Two or more strong emotion words in a row → −5
 - More than one emoji → −5
 
-### 三秒闸 — the last gate before a cluster's top row
+### 三秒闸 — checked once per title, at Step 8
 
-Ask all three of any candidate being considered as its cluster's `#1`:
+Ask all three of any freshly drafted title:
 
 1. Can the reader tell in **1 second** that this is written for them?
 2. Can they feel in **1 second** that it solves their pain or delivers their reward?
 3. Will they feel that not clicking costs them something?
 
-One unanswerable question means that candidate cannot win its cluster, whatever it scored — promote the next-best candidate in that same cluster instead.
+One unanswerable question fails the gate — redraft the same tactic (Step 8). After 3 failed attempts on the same tactic, keep the best of the 3 and flag which question it still fails; do not let it pass as clean.
+
+Step 9's classification applies one promotion gate: 高风险 cannot win 综合型 (below).
 
 ### Risk grading
 
