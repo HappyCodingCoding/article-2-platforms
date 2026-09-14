@@ -6,6 +6,118 @@ SKILL.md per this project's rule against carrying alternatives in a
 skill's own instructions — SKILL.md should describe what the agent does,
 not the options it considered.
 
+## Driving the browser (Step 4)
+
+All of these reach the user's real, logged-in browser without launching a
+separate one, and all of them were measured against the same requirement:
+no browser extension, works on macOS and Windows, and the article's cookies
+come from the session the user already has.
+
+### The Claude-in-Chrome extension
+
+Works, and needs no per-run interaction. Ruled out because it ties the skill
+to one agent harness's own extension, which is the dependency this transport
+was chosen to remove. Its page-driving model is otherwise the closest to the
+current one, so it remains the cheapest fallback if `bsk` becomes unusable.
+
+### Chrome DevTools Protocol, direct
+
+Verified end to end against a live Edge: the import, the title and the
+structure check all ran, `navigator.webdriver` reads `false`, and the
+User-Agent is the browser's genuine one — the cleanest detection posture of
+anything tested, because nothing is launched with automation switches. It
+also has no visibility guard, so hidden file inputs can be set without being
+exposed first, and its `evaluate` does not share a global scope.
+
+Reaching it takes one **one-time** switch: `edge://inspect/#remote-debugging`
+→ *Allow remote debugging for this browser instance*. That setting persists
+across restarts (`devtools.remote_debugging.user-enabled` in `Local State`),
+and it is the only way to get CDP onto the default profile — since Chrome 136
+a `--remote-debugging-port` flag is ignored there.
+
+Ruled out on one measured cost: **every fresh connection raises an
+"Allow remote debugging?" dialog the user must click.** A single session can
+cover a whole publish run, so the price is one click per run rather than per
+action, but it forecloses unattended use.
+
+Two details worth keeping if this is ever revisited:
+
+- The HTTP discovery endpoints stay disabled in this mode — `/json/version`
+  returns 404. The WebSocket URL has to be read from `DevToolsActivePort` in
+  the browser's user-data directory, and its browser UUID changes on every
+  restart, so it can never be cached.
+- That file is **not** cleaned up on exit. It survives pointing at a dead
+  port, so a connection attempt must be what proves CDP is live, not the
+  file's presence.
+
+### Playwright
+
+Not a separate transport: `connectOverCDP` goes through the same endpoint and
+raises the same per-connection dialog. Its API is markedly better than the
+alternatives — `setInputFiles` works on hidden inputs by design, and its
+auto-waiting would remove most of the polling this skill does by hand — so it
+is the natural destination if the current transport's API becomes the thing
+that hurts. Untested here.
+
+### Copying the browser profile and launching a second browser
+
+A dead end, recorded so it is not retried. Copying the profile directory and
+launching the browser against the copy looks like it should carry the
+session, and the cookie database does copy across intact when taken with
+SQLite's backup API rather than `cp` (a plain copy is an inconsistent
+snapshot the browser discards outright). But the second instance cannot
+obtain the OS keychain key that encrypts the cookie values, so it prunes
+every encrypted cookie on startup — measured at 65 Zhihu cookies in, 13 left,
+and the auth token gone. The browser then mints fresh anonymous cookies and
+the session is simply logged out.
+
+This is not a macOS quirk. Windows applies App-Bound Encryption to the same
+data, which is strictly harder to work around. Cookie material has to be
+decrypted by the browser process that owns it, which is why every viable
+option attaches to the running browser instead of copying from it.
+
+### browser-use
+
+An LLM-driven agent framework rather than a browser driver: a model
+interprets the page and decides what to click. Ruled out on fit. This skill's
+targeting is deliberately exact — file inputs are chosen by their `accept`
+attribute precisely because description-based matching picks the wrong one
+and fails like a success — and handing that decision back to a model
+reintroduces the failure the exactness exists to prevent. It also needs its
+own API key, and its anti-detection features are a hosted-service add-on that
+would route the user's cookies through a third party.
+
+## Automating the Step 4 setup
+
+Both manual steps in the setup gate were investigated for automation. Neither
+is worth doing, and the second should not be done at all.
+
+### Force-installing the extension by enterprise policy
+
+`ExtensionInstallForcelist` installs an extension silently. On Windows it can
+be set under `HKCU` without administrator rights; on macOS it needs a plist
+under `/Library`, so it needs `sudo`. The costs are that the browser then
+reports itself as managed by an organization and the user can no longer
+remove the extension.
+
+Ruled out because it buys nothing on its own. The file-URL permission below
+cannot be automated, so the skill still stops at its first upload — the
+managed-browser badge is paid for with no working run gained.
+
+### Writing the file-URL permission directly
+
+The toggle is stored in the browser's `Secure Preferences`
+(`edge_file_access_permission`, `newAllowFileAccess`), which is covered by a
+per-entry HMAC and a `super_mac`. Writing it externally means forging that
+tamper-detection, which exists specifically to stop software from granting an
+extension local-file access behind the user's back. Not done, and not to be
+added later.
+
+The UI cannot be driven either: both `bsk` and CDP are refused on
+`edge://`/`chrome://` pages, so the toggle cannot be clicked. No documented
+policy maps to it — `ExtensionSettings` → `file_url_navigation_allowed`
+governs navigating to `file://` URLs, not the host access the upload needs.
+
 ## Image insertion (Step 8)
 
 Both alternatives below were tried on an earlier, incorrect belief that
