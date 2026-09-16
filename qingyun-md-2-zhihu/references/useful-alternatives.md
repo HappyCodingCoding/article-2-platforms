@@ -6,6 +6,172 @@ SKILL.md per this project's rule against carrying alternatives in a
 skill's own instructions — SKILL.md should describe what the agent does,
 not the options it considered.
 
+## Choosing the browser driver (Step 4)
+
+The chosen mechanism is capability-based: SKILL.md states once the browser
+actions it needs, and `browser-drivers.md` maps them onto whichever driver the
+current agent has — its own browser extension first, `bsk` for any agent with
+a shell. Every option below reaches the user's real, logged-in browser without
+launching a separate one.
+
+### `bsk` as the only driver
+
+Agent-neutral by construction, and verified end to end with three draft runs
+on an earlier version of this skill. Ruled out as the only path because it
+makes every user install a CLI, a browser extension and a file-URL permission
+even when their agent already drives the browser through its own extension.
+It stays in the selection table as the fallback for agents without one.
+
+### The Claude-in-Chrome extension as the only driver
+
+Works, needs no per-run interaction, and verified end to end. Ruled out as the
+only path because it ties the skill to one agent harness.
+
+### Per-agent copies of Steps 4–10
+
+Detecting the agent and carrying a separate Step 4–10 for each would give
+every driver exact instructions. Ruled out because those steps are long and
+nearly identical across drivers — the Zhihu page logic never changes, only the
+verbs that reach it — so the copies would drift apart and a fix to one would
+silently miss the others.
+
+### Chrome DevTools Protocol, direct
+
+Verified end to end against a live Edge: the import, the title and the
+structure check all ran, `navigator.webdriver` reads `false`, and the
+User-Agent is the browser's genuine one — the cleanest detection posture of
+anything tested, because nothing is launched with automation switches. It
+also has no visibility guard, so hidden file inputs can be set without being
+exposed first, and its `evaluate` does not share a global scope.
+
+Reaching it takes one **one-time** switch: `edge://inspect/#remote-debugging`
+→ *Allow remote debugging for this browser instance*. That setting persists
+across restarts (`devtools.remote_debugging.user-enabled` in `Local State`),
+and it is the only way to get CDP onto the default profile — since Chrome 136
+a `--remote-debugging-port` flag is ignored there.
+
+Ruled out on one measured cost: **every fresh connection raises an
+"Allow remote debugging?" dialog the user must click.** A single session can
+cover a whole publish run, so the price is one click per run rather than per
+action, but it forecloses unattended use.
+
+Two details worth keeping if this is ever revisited:
+
+- The HTTP discovery endpoints stay disabled in this mode — `/json/version`
+  returns 404. The WebSocket URL has to be read from `DevToolsActivePort` in
+  the browser's user-data directory, and its browser UUID changes on every
+  restart, so it can never be cached.
+- That file is **not** cleaned up on exit. It survives pointing at a dead
+  port, so a connection attempt must be what proves CDP is live, not the
+  file's presence.
+
+### Playwright over CDP
+
+Not a separate transport: `connectOverCDP` goes through the same endpoint and
+raises the same per-connection dialog. Its API is markedly better —
+`setInputFiles` works on hidden inputs by design, and its auto-waiting would
+remove most of the polling this skill does by hand. Untested here. (Codex's
+plugin exposes a Playwright handle through its own extension instead, which
+avoids the dialog; that is the `codex-chrome` driver.)
+
+### Copying the browser profile and launching a second browser
+
+A dead end, recorded so it is not retried. Copying the profile directory and
+launching the browser against the copy looks like it should carry the
+session, and the cookie database does copy across intact when taken with
+SQLite's backup API rather than `cp` (a plain copy is an inconsistent
+snapshot the browser discards outright). But the second instance cannot
+obtain the OS keychain key that encrypts the cookie values, so it prunes
+every encrypted cookie on startup — measured at 65 Zhihu cookies in, 13 left,
+and the auth token gone. The browser then mints fresh anonymous cookies and
+the session is simply logged out.
+
+This is not a macOS quirk. Windows applies App-Bound Encryption to the same
+data, which is strictly harder to work around. Cookie material has to be
+decrypted by the browser process that owns it, which is why every viable
+option attaches to the running browser instead of copying from it.
+
+### browser-use
+
+An LLM-driven agent framework rather than a browser driver: a model
+interprets the page and decides what to click. Ruled out on fit. This skill's
+targeting is deliberately exact — file inputs are chosen by their `accept`
+attribute precisely because description-based matching picks the wrong one
+and fails like a success — and handing that decision back to a model
+reintroduces the failure the exactness exists to prevent. It also needs its
+own API key, and its anti-detection features are a hosted-service add-on that
+would route the user's cookies through a third party.
+
+## Automating the `bsk` setup gate (Step 4)
+
+Both manual steps in `bsk`'s setup gate were investigated for automation.
+Neither is worth doing, and the second should not be done at all.
+
+### Force-installing the extension by enterprise policy
+
+`ExtensionInstallForcelist` installs an extension silently. On Windows it can
+be set under `HKCU` without administrator rights; on macOS it needs a plist
+under `/Library`, so it needs `sudo`. The costs are that the browser then
+reports itself as managed by an organization and the user can no longer
+remove the extension.
+
+Ruled out because it buys nothing on its own. The file-URL permission below
+cannot be automated, so the skill still stops at its first upload — the
+managed-browser badge is paid for with no working run gained.
+
+### Writing the file-URL permission directly
+
+The toggle is stored in the browser's `Secure Preferences`
+(`edge_file_access_permission`, `newAllowFileAccess`), which is covered by a
+per-entry HMAC and a `super_mac`. Writing it externally means forging that
+tamper-detection, which exists specifically to stop software from granting an
+extension local-file access behind the user's back. Not done, and not to be
+added later.
+
+The UI cannot be driven either: both `bsk` and CDP are refused on
+`edge://`/`chrome://` pages, so the toggle cannot be clicked. No documented
+policy maps to it — `ExtensionSettings` → `file_url_navigation_allowed`
+governs navigating to `file://` URLs, not the host access the upload needs.
+
+## Hosting images for the import (Step 3)
+
+The chosen mechanism uploads each image file from disk to img.scdn.io in a
+multipart `image` field, asks for the source's own `outputFormat`, and leaves
+`cdn_domain` unset. Zhihu's import copied the resulting URLs onto
+`pic-private.zhihu.com` at the right positions and sizes.
+
+### Letting the host fetch the image itself (`image_url`)
+
+The API accepts `image_url` and downloads the image server-side, which would
+skip the local download. Ruled out: local files and relative paths have no URL
+to hand it, so the script would need both paths anyway; the host fetches
+through its own proxy, one more hop for a Notion link that is already racing
+its ~5-minute expiry; and the manual fallback in Step 8 needs every image on
+disk regardless.
+
+### Pinning a mainland CDN (`cdn_domain=esaimg.cdn1.vip`)
+
+Tested and worked: the upload returned an `esaimg.cdn1.vip` URL, and Zhihu
+re-hosted it exactly like the default. Not chosen because the default worked
+just as well, and the host's CDN list moves — the default upload returned
+`img.cdn1.vip`, which is not on the documented list at all — so a pinned
+domain is one more thing that can go stale. Worth trying if Zhihu starts
+failing to re-host default-domain URLs.
+
+### The host's default `outputFormat=auto`
+
+Converts static images to WebP. Not tested against Zhihu's importer. Ruled out
+because requesting the source's own format keeps the image as the author
+supplied it, and Zhihu recompresses it on its own CDN anyway.
+
+### Calling Zhihu's re-host endpoint from page JS
+
+A hand-built `POST /api/uploaded_images` (`url` + `source=article`, with the
+`_xsrf` token as `x-xsrftoken`) was rejected by Zhihu's gateway with `403` in
+under 100 ms for both hosted URLs, before Zhihu ever tried to fetch them —
+the editor's own requests carry headers a bare `fetch` lacks. Importing the
+markdown lets the editor make the call itself.
+
 ## Image insertion (Step 8)
 
 Both alternatives below were tried on an earlier, incorrect belief that
@@ -15,7 +181,7 @@ problem — getting a local image into the editor — and share the same
 weakness: both insert the image before its upload finishes, entirely
 inside the editor, which is the window where an image can stall into
 上传失败 if the next one starts too soon. The dialog flow SKILL.md
-actually uses avoids that window: the image is already on Zhihu's CDN
+uses for images that kept a placeholder avoids that window: the image is already on Zhihu's CDN
 by the time it's inserted. Everything specific to each mechanism follows.
 
 ### Clipboard paste
@@ -188,10 +354,37 @@ observed in a real run: an image uploaded to the attachment input, which
 turns the dialog's button into 添加文件 and inserts a file-name card rather
 than a picture, with no error anywhere.
 
-Ruled out in favour of selecting by `accept` in page JS, stamping the winner
-with a unique `aria-label`, and searching for that label — which is exact,
-and prints the `accept` it chose so the decision is visible before anything
-is uploaded.
+Ruled out in favour of selecting by `accept` in page JS and stamping the
+winner with both a data attribute and a unique `aria-label` — a CSS selector
+for drivers that take one, a name for drivers that search by description.
+Either way the target is exact, and the snippet prints the `accept` it chose
+so the decision is visible before anything is uploaded.
+
+## Selecting the placeholder (Step 8)
+
+The chosen mechanism clicks the tagged span, presses End, then Shift+Home, and
+confirms the selection text before deleting anything.
+
+### Triple-click
+
+Worked under `claude-in-chrome` in a real run. Ruled out for two reasons. It
+needs the page to hold focus: a driver's own click grants that (measured —
+`document.hasFocus()` becomes true even while the tab stays hidden), but a
+window driven with focus withheld, such as `bsk`'s `--no-focus` Agent Window,
+selects nothing at all. And the selection it makes can include the
+placeholder's trailing line break (`【ZHIHU-IMG-N】\n`), so Backspace removes
+the whole paragraph instead of leaving an empty one. Keyboard selection
+behaves the same on every driver.
+
+### Resolving the image input once, before the loop
+
+Open the dialog once, tag its file input, press Escape, and reuse the tag for
+every image — the input is the same element each time the dialog reopens.
+Tried in a real run and dropped: the extra open-and-close cycle is one more
+chance for a half-closed modal to eat the next click, and in that run the
+triple-click that followed landed on the page's bottom bar instead of the
+placeholder. Opening the dialog per image, after the cursor is parked, costs
+one tagging snippet each time and leaves no modal state between images.
 
 ## Getting the upload dialog to react (Step 8)
 
@@ -222,6 +415,24 @@ server `state: draft` — passed.
 The skill rebuilds instead: clear the body, re-import, run the loop again.
 Consistent with the existing rule that a draft in a bad state is easier to
 rebuild than to repair.
+
+### Rebuilding when the placeholder's paragraph collapses
+
+When Backspace removes the placeholder's whole paragraph instead of leaving
+it empty, a rebuild would be safe, but it is not needed: nothing has been
+inserted yet, and both neighbours were recorded in step 1. The skill instead
+clicks on the first line of the following block, presses Home then Enter to
+push that block down, moves up into the new empty block, and checks that it
+sits between the recorded neighbours with the caret in it. Rebuilding stays
+the fix once an image has actually gone in at the wrong place.
+
+### Recreating the block from the preceding block with End then Enter
+
+Worked in a real run, but only because the preceding paragraph fit on one
+line. `End` moves to the end of the visual line, not the end of the block, so
+on a wrapped paragraph Enter splits the author's text mid-sentence. Starting
+from the block below avoids this: the caret sits on its first line, where
+`Home` and the block start coincide.
 
 ## Deciding when to insert missing blank lines (Step 3)
 
