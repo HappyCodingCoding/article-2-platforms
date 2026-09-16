@@ -3,7 +3,7 @@
 file for import into Zhihu's column-article editor.
 
 Usage:
-    python3 script.py --source <path-to-local-markdown.md> [--title "..."] [--out-dir <dir>]
+    python3 script.py --source <path-to-local-markdown.md> [--title "..."] [--out-dir <dir>] [--image-hosting yes|no]
 
 What it does:
     1. Reads the markdown file from disk (it must already be local -- if the
@@ -15,11 +15,15 @@ What it does:
     3. Finds every image reference in the body, in document order. A remote
        (http/https) image is downloaded immediately; a local/relative image
        path is copied in. Each image is saved as images/img-N.<ext> next to
-       the processed markdown file.
-    4. Replaces every image reference with a plain-text placeholder
-       (【ZHIHU-IMG-N】) on its own paragraph, so the placeholder survives
-       Zhihu's markdown-to-HTML import as an isolated, easy-to-find text node
-       that can be swapped for the real uploaded image afterward.
+       the processed markdown file, and its reference is replaced by a
+       plain-text placeholder (【ZHIHU-IMG-N】) on its own paragraph.
+    4. Unless --image-hosting is no, uploads each saved image to the public
+       image host img.scdn.io (see image_hosting.py) and swaps its
+       placeholder for a markdown image at the hosted URL. Zhihu's import
+       re-hosts public https images onto its own CDN in place, but cannot
+       fetch a local path. An image the host rejects keeps its placeholder,
+       which survives the import as an isolated, easy-to-find text node that
+       the agent swaps for a manually uploaded image afterward.
     5. Rewrites raw <table> HTML as a markdown pipe table, so the first row
        becomes a real header, then normalizes block separation. Markdown
        separates blocks on a blank line, but some sources (`notion-fetch`
@@ -37,12 +41,14 @@ What it does:
        the run is never interrupted and the numbering stays continuous.
     7. Writes the processed markdown to <out-dir>/processed.md and prints a
        JSON manifest to stdout describing the title, the processed file,
-       every image (its placeholder text and local path, in upload order),
+       every image (its hosted URL or placeholder, and its local path, in
+       document order),
        the block structure the import should produce, and any list content
        that could not be flattened safely.
 
 This script never talks to Zhihu. Opening the editor, importing the file,
-and inserting each image is done by the agent driving the browser, using
+and inserting each image that kept a placeholder is done by the agent
+driving the browser, using
 this manifest as its instructions.
 """
 
@@ -56,6 +62,8 @@ import ssl
 import sys
 import urllib.request
 from urllib.parse import urlparse
+
+from image_hosting import HostingError, ImageHost
 
 try:
     import certifi
@@ -392,6 +400,10 @@ def normalize_source(text):
 # so a source shape this script mis-handles stops the run instead of quietly
 # producing a mangled draft.
 
+# A hosted image alone on its line imports as an image block, not a paragraph.
+IMAGE_LINE_RE = re.compile(r'^!\[[^\]]*\]\([^)\s]+\)\s*$')
+
+
 def describe_structure(text):
     """Count the blocks the processed markdown should produce."""
     lists = []
@@ -399,6 +411,7 @@ def describe_structure(text):
     paragraphs = 0
     blockquotes = 0
     headings = 0
+    images = 0
 
     lines = text.split("\n")
     i = 0
@@ -410,6 +423,10 @@ def describe_structure(text):
             i += 1
             continue
         if in_fence or not line.strip():
+            i += 1
+            continue
+        if IMAGE_LINE_RE.match(line):
+            images += 1
             i += 1
             continue
 
@@ -465,6 +482,7 @@ def describe_structure(text):
         "blockquotes": blockquotes,
         "lists": lists,
         "tables": tables,
+        "images": images,
     }
 
 
@@ -547,7 +565,29 @@ def flatten_lists(text):
     return "\n".join(out), warnings
 
 
-def process(source_path, out_dir, title_override=None):
+def host_images(images, text, warnings):
+    """Upload each image to the public host and point its markdown at it.
+
+    An image the host does not take keeps its placeholder, so the agent
+    inserts that one by hand after import.
+    """
+    host = ImageHost(_SSL_CONTEXT)
+    for image in images:
+        try:
+            url = host.upload(image["local_path"])
+        except HostingError as exc:
+            image["hosting_error"] = str(exc)
+            warnings.append(
+                "image %d was not hosted (%s), so it keeps placeholder %s "
+                "for manual insertion" % (image["index"], exc, image["placeholder"]))
+            continue
+        text = text.replace(image["placeholder"], "![](%s)" % url)
+        image["hosted_url"] = url
+        image["placeholder"] = None
+    return text
+
+
+def process(source_path, out_dir, title_override=None, image_hosting=True):
     source_path = os.path.abspath(source_path)
     source_dir = os.path.dirname(source_path)
 
@@ -595,14 +635,17 @@ def process(source_path, out_dir, title_override=None):
             "placeholder": placeholder,
             "source_url": url,
             "local_path": os.path.abspath(local_path),
+            "hosted_url": None,
         })
         # Isolate the placeholder on its own paragraph.
         return "\n\n%s\n\n" % placeholder
 
     text, warnings = flatten_lists(text)
     processed_text = IMAGE_RE.sub(replace, text)
+    if image_hosting:
+        processed_text = host_images(images, processed_text, warnings)
     structure = describe_structure(processed_text)
-    structure["images"] = len(images)
+    structure["placeholders"] = sum(1 for image in images if image["placeholder"])
 
     # Paragraph lines left joined because the line above them broke
     # mid-sentence. Usually right, but it is also what a genuinely merged
@@ -624,6 +667,7 @@ def process(source_path, out_dir, title_override=None):
         "source": source_path,
         "processed_markdown": os.path.abspath(processed_path),
         "images_dir": os.path.abspath(images_dir),
+        "image_hosting": "yes" if image_hosting else "no",
         "images": images,
         "blank_lines_inserted": blanks_inserted,
         "soft_wrapped_lines": soft_wraps,
@@ -636,12 +680,16 @@ def process(source_path, out_dir, title_override=None):
 def main():
     ap = argparse.ArgumentParser(
         description="qingyun-md-2-zhihu: prepare a local markdown file "
-                     "(title + placeholder'd images) for Zhihu import")
+                     "(title + hosted or placeholder'd images) for Zhihu import")
     ap.add_argument("--source", required=True,
                      help="path to the local markdown file")
     ap.add_argument("--title", default=None,
                      help="override title instead of auto-detecting the "
                           "first heading")
+    ap.add_argument("--image-hosting", choices=("yes", "no"), default="yes",
+                     help="upload images to img.scdn.io so Zhihu's import "
+                          "places them (default: yes); no keeps every image "
+                          "as a placeholder for manual insertion")
     ap.add_argument("--out-dir", default=None,
                      help="where to write processed.md and images/ "
                           "(default: a sibling 'zhihu-import' folder next "
@@ -657,7 +705,8 @@ def main():
         out_dir = os.path.join(os.path.dirname(os.path.abspath(args.source)),
                                 base + "-zhihu-import")
 
-    manifest = process(args.source, out_dir, args.title)
+    manifest = process(args.source, out_dir, args.title,
+                       args.image_hosting == "yes")
     print(json.dumps(manifest, ensure_ascii=False, indent=2))
 
     if manifest["errors"]:
