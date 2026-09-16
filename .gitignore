@@ -1,2 +1,4 @@
-/.DS_Store
-/gzh-xhs-title
+# Python bytecode
+**/__pycache__/
+*.py[cod]
+.DS_Store
