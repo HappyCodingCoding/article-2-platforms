@@ -28,10 +28,11 @@ What it does:
        becomes a real header, then normalizes block separation. Markdown
        separates blocks on a blank line, but some sources (`notion-fetch`
        among them) return one block per line with no blank lines, which fuses
-       paragraphs, swallows them into neighbouring list items, and merges
-       separate lists into one. The decision is made per adjacent pair, so a
-       source separated in some places and not others is repaired everywhere
-       it needs to be, and a well-formed file has nothing to act on.
+       paragraphs, swallows them into neighbouring list items, merges
+       separate lists into one, and merges separate blockquotes into one.
+       The decision is made per adjacent pair, so a source separated in some
+       places and not others is repaired everywhere it needs to be, and a
+       well-formed file has nothing to act on.
     6. Flattens every list so each item is a single markdown block. Zhihu's
        editor is Draft.js, which has no <ol start> and no nested blocks
        inside a list item: any block that interrupts a run of list items
@@ -272,8 +273,9 @@ def convert_html_tables(text):
 # wrap. Some sources hand back one block per line with no blank lines at all
 # (`notion-fetch` does), and imported as-is every consecutive paragraph fuses,
 # a paragraph touching a list is absorbed into the preceding list item as lazy
-# continuation, and an ordered list beginning with "1." silently continues the
-# list above it instead of starting its own.
+# continuation, an ordered list beginning with "1." silently continues the
+# list above it instead of starting its own, and two separate blockquotes
+# fuse into one (or into one paragraph inside it).
 #
 # A well-formed markdown file already has those blank lines, so it has no
 # adjacent non-blank lines for this pass to act on and comes through untouched.
@@ -284,6 +286,11 @@ def convert_html_tables(text):
 FENCE_LINE_RE = re.compile(r'^\s*(```|~~~)')
 TABLE_LINE_RE = re.compile(r'^\s*\|')
 QUOTE_LINE_RE = re.compile(r'^\s*>')
+# A quote marker with nothing after it (`>`, `> `, `>>` ...) -- markdown's
+# idiom for a paragraph break *inside* one blockquote. Its presence is the
+# only signal that two adjacent quote lines belong to the same block rather
+# than being two blocks that simply landed next to each other.
+EMPTY_QUOTE_RE = re.compile(r'^\s*(>[ \t]*)+$')
 HEADING_LINE_RE = re.compile(r'^\s*#{1,6}[ \t]')
 HTML_OPEN_RE = re.compile(r'^\s*<([A-Za-z][A-Za-z0-9]*)')
 # `Title` + `=====` (or `-----`) is a setext heading: the underline belongs to
@@ -298,10 +305,27 @@ SETEXT_RE = re.compile(r'^\s*(=+|-{2,})\s*$')
 # punctuation marks the end of a block.
 SENTENCE_END = "。．.！？!?…：:；;”』」）)"
 
+# A line that is nothing but one bold (or bold-underscore) span reads as a
+# mini-heading/label -- "**使用**", "**安装**" -- never as the first half of a
+# sentence that continues, soft-wrapped, on the next line. It is checked on
+# both sides of a para/para pair: as the line above, it never blends into
+# what follows; as the line below, it never continues what came before.
+LABEL_LINE_RE = re.compile(r'^(\*\*|__)(?:(?!\1).)+\1\s*$')
+
 
 def ends_a_sentence(line):
     """True when this line reads as the end of a block, not a soft wrap."""
     return line.rstrip().endswith(tuple(SENTENCE_END))
+
+
+def is_label_line(line):
+    """True for a line that is only a bold span, used as a heading-like label."""
+    return bool(LABEL_LINE_RE.match(line.strip()))
+
+
+def is_empty_quote(line):
+    """True for a quote-marker line carrying no text of its own."""
+    return bool(EMPTY_QUOTE_RE.match(line))
 
 
 def line_kind(line):
@@ -327,8 +351,10 @@ def line_kind(line):
 
 
 # Runs of these belong to a single block, so consecutive lines of the same
-# kind must stay glued together.
-RUN_KINDS = {"table", "quote", "list", "html"}
+# kind must stay glued together. Quote is deliberately not here: unlike a
+# table's rows or a list's items, two adjacent quote lines are ambiguous --
+# see the quote/quote branch below.
+RUN_KINDS = {"table", "list", "html"}
 
 # Kinds that must never be separated from the line above them, because they
 # are part of that line's block rather than the start of a new one.
@@ -377,11 +403,29 @@ def normalize_source(text):
                 pass  # part of the block above, never separated from it
             elif kind == "para" and prev_kind == "para":
                 # The only ambiguous pair: two blocks, or one soft-wrapped one.
-                if ends_a_sentence(prev_line):
+                # A bold-only label line (a mini-heading like "**使用**") settles
+                # it either way, regardless of how it or its neighbour end.
+                if (ends_a_sentence(prev_line) or is_label_line(prev_line)
+                        or is_label_line(line)):
                     out.append("")
                     inserted += 1
                 else:
                     soft_wraps += 1
+            elif kind == "quote" and prev_kind == "quote":
+                # `notion-fetch` hands back one quote *block* per line, so two
+                # quote lines with real content and no separator between them
+                # are almost always two distinct blockquotes landing next to
+                # each other -- left glued, they merge into one blockquote
+                # (or one paragraph inside it). The one legitimate reason to
+                # keep them glued is markdown's own idiom for a paragraph
+                # break *inside* a single blockquote: a bare `>` line. Its
+                # presence on either side means the author already marked
+                # this pair as belonging to the same block.
+                if is_empty_quote(prev_line) or is_empty_quote(line):
+                    pass
+                else:
+                    out.append("")
+                    inserted += 1
             else:
                 out.append("")
                 inserted += 1
@@ -652,11 +696,11 @@ def process(source_path, out_dir, title_override=None, image_hosting=True):
     # source looks like, so say so rather than deciding silently.
     if soft_wraps:
         warnings.append(
-            "%d paragraph line(s) were treated as soft wrapping and left "
-            "joined to the line above, because that line did not end on "
+            "%d paragraph or quote line(s) were treated as soft wrapping and "
+            "left joined to the line above, because that line did not end on "
             "sentence-final punctuation. If the article reads as merged "
-            "paragraphs, the source lost its blank lines before reaching "
-            "this script." % soft_wraps)
+            "paragraphs or blockquotes, the source lost its blank lines "
+            "before reaching this script." % soft_wraps)
 
     processed_path = os.path.join(out_dir, "processed.md")
     with open(processed_path, "w", encoding="utf-8") as fh:
