@@ -76,7 +76,12 @@ The ImgBB key is the user's own credential. The script reads it from the `IMGBB_
 
 ### Step 1 — Resolve the files and options
 
-Confirm each path exists, then state the resolved options. When `--any-file` is not given, every file must be an image; if one is not, say which and ask whether to switch to `--any-file` instead of running. When `--host fallback` and `--persistence temporary` are both in effect, say that the file will most likely land on a temporary host, since the most reliable hosts come first and the top two are temporary — Uguu (a fixed 3h) first, then kappa (an unstated time), imgcdn (14 days), scdn (60 days without a view) or Litterbox (24h) — and that `--persistence permanent` keeps it to hosts whose links never expire. If the files are private, point out that the upload is public and cannot be deleted, and wait for a go-ahead.
+Confirm each path exists, then state the resolved options and go straight to Step 2 — this step is a status line, not a question, and an invocation with no options given is a request to run with every default, not an invitation to pick one. Only stop and ask when something is actually wrong or genuinely ambiguous:
+- a file is missing;
+- `--any-file` is not given and a file is not an image (say which, and ask whether to switch to `--any-file`);
+- the user's own wording conflicts with an option they also gave (e.g. they asked for a permanent link but also named a temporary `--host`).
+
+When `--host fallback` and `--persistence temporary` are both in effect (the defaults), mention in the status line that the file will most likely land on a temporary host, since the most reliable hosts come first and the top two are temporary — Uguu (a fixed 3h) first, then kappa (an unstated time), imgcdn (14 days), scdn (60 days without a view) or Litterbox (24h) — and that `--persistence permanent` keeps it to hosts whose links never expire. This is context for the one line the user gets back, not a reason to pause: run with the default unless the user's own request called the file private, confidential, or otherwise not for public posting, in which case point out that every upload is public and cannot be deleted, and wait for a go-ahead instead of running.
 
 ### Step 2 — Upload (script)
 
