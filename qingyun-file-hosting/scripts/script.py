@@ -3,7 +3,7 @@
 public file host and prints their URLs.
 
 Usage:
-    python3 script.py <file> [<file> ...] [--host fallback|litterbox|catbox]
+    python3 script.py <file> [<file> ...] [--host fallback|catbox|picrd|imgcdn|litterbox]
                       [--images-only | --any-file]
                       [--persistence temporary|permanent]
 
@@ -11,8 +11,9 @@ What it does:
     1. Checks every file exists. With --images-only (the default), also
        checks every file is an image, and stops before uploading anything
        if one is not.
-    2. Builds the provider queue. --host fallback takes every provider in
-       providers.PROVIDERS order that fits the other options: --any-file
+    2. Builds the provider queue. --host fallback takes every provider that
+       fits the other options, in providers.PROVIDERS order (most reliable
+       first): --any-file
        keeps only providers that accept any file type, --persistence
        permanent keeps only permanent ones. A named --host is the whole
        queue, and must fit the other options too.
@@ -26,13 +27,13 @@ What it does:
            this lap, and its files wait for the next provider.
          - Any other reply: the file is not tried anywhere else, and the
            reply is reported as its error.
-       If any file is still pending once every provider has had a turn, the
-       whole queue runs one more time (a second lap) for the files still
-       pending — so a file that hit a transient network/HTTP error gets one
-       more turn at every provider, in the same order, instead of stopping
-       at the end of the first lap. A file a provider explicitly rejected
-       with a non-URL reply is not retried in the second lap: that reply is
-       a definite answer, not a blip.
+       If a file is still pending once every provider has had a turn and it
+       met a network or HTTP error on the way, the whole queue runs one more
+       time (a second lap) for it — one more turn at every provider, in the
+       same order. A file that was only refused on size or type is not
+       retried, since those checks come out the same every lap, and neither
+       is a file a provider rejected with a non-URL reply: that reply is a
+       definite answer, not a blip.
     4. Prints to stdout the URL for a single file, or a JSON array of URLs
        in input order (null for a file that failed) for several. Per-file
        progress and errors go to stderr.
@@ -128,8 +129,9 @@ def batches(provider, indices, sizes):
         yield batch
 
 
-# A file still pending after one full pass through the queue gets exactly
-# one more full pass (a "retry lap") before it is reported as failed.
+# A file still pending after one full pass through the queue because of a
+# network or HTTP error gets exactly one more full pass (a "retry lap")
+# before it is reported as failed.
 MAX_LAPS = 2
 
 
@@ -140,11 +142,18 @@ def upload_all(paths, queue):
     urls = [None] * len(paths)
     errors = [[] for _ in paths]
     pending = list(range(len(paths)))
+    given_up = []
+    hit_transport_error = set()
 
     for lap in range(1, MAX_LAPS + 1):
-        if not pending:
-            break
         if lap > 1:
+            # Refusals are decided locally and come out the same every lap,
+            # so only a file that met a network or HTTP error goes round again.
+            given_up += [i for i in pending if i not in hit_transport_error]
+            pending = [i for i in pending if i in hit_transport_error]
+            hit_transport_error = set()
+            if not pending:
+                break
             print("retrying %d file(s) from the top of the queue (lap %d of %d)"
                   % (len(pending), lap, MAX_LAPS), file=sys.stderr)
             for i in pending:
@@ -169,6 +178,7 @@ def upload_all(paths, queue):
                     for i in eligible:
                         if i in pending:
                             errors[i].append(note)
+                            hit_transport_error.add(i)
                     break
                 except RejectedError as exc:
                     for i in batch:
@@ -187,7 +197,7 @@ def upload_all(paths, queue):
             if not pending:
                 break
 
-    for i in pending:
+    for i in sorted(given_up + pending):
         print("✗ %s — no provider took it: %s" % (paths[i], "; ".join(errors[i])),
               file=sys.stderr)
     return urls

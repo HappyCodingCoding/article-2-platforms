@@ -12,6 +12,30 @@ Ruled out because anonymous uploads are enough for this skill, and a userhash
 is an account credential the skill would have to keep out of transcripts
 (e.g. by reading it from an environment variable).
 
+## picrd uploads
+
+### `ttl_seconds` for self-expiring uploads
+
+picrd deletes an upload after `ttl_seconds` when the field is sent, which
+would let it serve as a temporary host too. Ruled out because
+`--persistence temporary` means any host is acceptable, not that files should
+expire, so there is no reason to give up a permanent link.
+
+### `visibility=public`
+
+Lists the upload on picrd's public feed. Ruled out in favour of the default
+`unlisted`: a link that works for anyone who has it is all this skill needs.
+
+## imgcdn uploads
+
+### `format=json` and reading `image.url`
+
+The default Chevereto reply is JSON carrying the direct link at `image.url`,
+along with the viewer link, thumbnail, size and the guest expiration date.
+Ruled out in favour of `format=txt`, which replies with the bare direct URL
+on success and a bare error message on failure — the same shape Catbox and
+Litterbox reply in, so no provider-specific parsing is needed.
+
 ## HTTP client
 
 ### `requests`
