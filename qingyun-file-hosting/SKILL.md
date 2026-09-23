@@ -1,6 +1,6 @@
 ---
 name: qingyun-file-hosting
-description: Uploads one or more local files to a public file host and returns their URLs — one URL for one file, a JSON array for several. Providers are Litterbox (temporary, 24h, up to 1 GB) and Catbox (permanent, up to 200 MB), both accepting any file type. `--host fallback` (default) tries each fitting provider in turn until one succeeds; `--host <name>` uses only that one. `--images-only` (default) / `--any-file` sets which file types are allowed and which providers qualify; `--persistence temporary` (default) / `permanent` limits the queue to providers whose links never expire. Anonymous uploads only — no account, no deletion afterwards. Triggers on "upload this file", "host this image", "give me a public link for", "图床", "上传文件", "file hosting", "catbox", "litterbox". Does not download, convert or compress files.
+description: Uploads one or more local files to a public file host and returns their URLs — one URL for one file, a JSON array for several. Providers are Litterbox (temporary, 24h, up to 1 GB) and Catbox (permanent, up to 200 MB), both accepting any file type. `--host fallback` (default) tries each fitting provider in turn until one succeeds, running the whole queue a second time for any file still pending after a transient error before giving up on it; `--host <name>` uses only that one. `--images-only` (default) / `--any-file` sets which file types are allowed and which providers qualify; `--persistence temporary` (default) / `permanent` limits the queue to providers whose links never expire. Anonymous uploads only — no account, no deletion afterwards. Triggers on "upload this file", "host this image", "give me a public link for", "图床", "上传文件", "file hosting", "catbox", "litterbox". Does not download, convert or compress files.
 ---
 
 # File Hosting
@@ -43,17 +43,19 @@ python3 qingyun-file-hosting/scripts/script.py <file> [<file> ...] [--host <fall
 ```
 Omit each option that is at its default.
 
-The script checks the files, builds the queue, and walks it. At each provider, a file over its size limit or with a refused extension is passed on to the next provider without being sent. A network or HTTP error drops that provider for the rest of the run and passes its files on. A reply that is not a URL stops that file there — it is not tried on any other provider — and the reply is reported as its error. Every provider currently takes one file per request, so several files are uploaded one after another.
+The script checks the files, builds the queue, and walks it. At each provider, a file over its size limit or with a refused extension is passed on to the next provider without being sent. A network or HTTP error drops that provider for the rest of this lap and passes its files on. A reply that is not a URL stops that file there — it is not tried on any other provider, even on a later lap — and the reply is reported as its error. Every provider currently takes one file per request, so several files are uploaded one after another.
+
+If any file is still pending once every provider in the queue has had a turn, the whole queue runs again from the top for the files still pending — one retry lap, so a file that hit a transient network/HTTP error at one provider gets a second turn at every provider, in order, before it is reported as failed.
 
 stdout holds the result: the URL for a single file, or a JSON array of URLs in input order, with `null` for a file that failed. stderr holds the queue, one line per file saying which provider took it (and when it expires), and the error for each file that failed. Exit status is `0` when every file was uploaded, `1` when any failed, and `2` when the arguments were invalid and nothing was uploaded.
 
 ### Step 3 — Report
 
-Give the user the URL(s) in input order, naming the provider for each and the expiry for a Litterbox link. For each failed file, quote its error. If every provider failed with a network error, say the hosts look unreachable from this machine — a local proxy is the usual cause — and ask the user to check it rather than retrying. See Gotchas for the two failures worth naming to the user by their cause.
+Give the user the URL(s) in input order, naming the provider for each and the expiry for a Litterbox link. For each failed file, quote its error — from the retry lap if it ran one, since that overwrites the first lap's reasons for a file that is still pending. If every provider failed with a network error on both laps, say the hosts look unreachable from this machine — a local proxy is the usual cause — and ask the user to check it rather than retrying again. See Gotchas for the two failures worth naming to the user by their cause.
 
 ## Gotchas
 
-**Litterbox blocks an IP that has just failed there.** Its firewall (BunkerWeb) answers `403 Forbidden` to the whole site, uploads and homepage alike, for an IP whose requests it dislikes — a run of rejected uploads is enough to trigger it. It says "try again in a few minutes" but has been seen to last over half an hour. Nothing on this side fixes it: report it, and either retry later or pass `--host catbox`.
+**Litterbox blocks an IP that has just failed there.** Its firewall (BunkerWeb) answers `403 Forbidden` to the whole site, uploads and homepage alike, for an IP whose requests it dislikes — a run of rejected uploads is enough to trigger it. It says "try again in a few minutes" but has been seen to last over half an hour, well past this skill's one retry lap. A single dropped connection (not the WAF) usually clears by the retry lap on its own; if the error is still there on the retry lap too, or Catbox took the file instead, report it and either retry later or pass `--host catbox`.
 
 **Catbox returns the same URL for a file it already has.** Uploading identical bytes twice gives one URL, so a re-run costs nothing — but the URL may also point at an older copy under that hash. A file that matters should be opened once to confirm the content is there.
 
