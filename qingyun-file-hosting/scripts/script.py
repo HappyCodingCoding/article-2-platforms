@@ -3,7 +3,7 @@
 public file host and prints their URLs.
 
 Usage:
-    python3 script.py <file> [<file> ...] [--host fallback|catbox|picrd|imgcdn|litterbox]
+    python3 script.py <file> [<file> ...] [--host fallback|catbox|picrd|imgbb|imgcdn|uguu|kappa|litterbox|sxcu]
                       [--images-only | --any-file]
                       [--persistence temporary|permanent]
 
@@ -15,8 +15,10 @@ What it does:
        fits the other options, in providers.PROVIDERS order (most reliable
        first): --any-file
        keeps only providers that accept any file type, --persistence
-       permanent keeps only permanent ones. A named --host is the whole
-       queue, and must fit the other options too.
+       permanent keeps only permanent ones. A provider that needs something
+       this machine lacks (imgbb without an API key) is left out, with a
+       note. A named --host is the whole queue, and must fit the other
+       options and be usable too.
     3. Walks the queue. At each provider, the files still waiting are
        checked against its limits (size, banned extensions); a file it
        cannot take waits for the next provider. The rest are uploaded, one
@@ -30,7 +32,10 @@ What it does:
        If a file is still pending once every provider has had a turn and it
        met a network or HTTP error on the way, the whole queue runs one more
        time (a second lap) for it — one more turn at every provider, in the
-       same order. A file that was only refused on size or type is not
+       same order. When a proxy is in use, the second lap goes direct,
+       since a proxy that breaks TLS to one host is a common cause of the
+       first lap's network errors. A file that was only refused on size or
+       type is not
        retried, since those checks come out the same every lap, and neither
        is a file a provider rejected with a non-URL reply: that reply is a
        definite answer, not a blip.
@@ -39,7 +44,8 @@ What it does:
        progress and errors go to stderr.
 
 Exit status: 0 when every file was uploaded, 1 when any file failed,
-2 when the arguments are invalid and nothing was uploaded.
+2 when the arguments are invalid and nothing was uploaded, 3 when the named
+--host needs an API key that is not set and nothing was uploaded.
 """
 
 import argparse
@@ -47,6 +53,7 @@ import json
 import os
 import sys
 
+import http_post
 from providers import PROVIDERS, PROVIDERS_BY_NAME, RejectedError, TransportError
 
 IMAGE_EXTENSIONS = {
@@ -96,9 +103,16 @@ def mismatch(provider, any_file, persistence):
     if any_file and provider.accepts != "any":
         return "%s accepts images only, but --any-file was given" % provider.name
     if persistence == "permanent" and provider.persistence != "permanent":
-        return "%s is temporary (uploads expire after %s), but --persistence " \
-               "permanent was given" % (provider.name, provider.expiry)
+        return "%s is temporary (%s), but --persistence permanent was given" % (
+            provider.name, _lifetime(provider))
     return None
+
+
+def _lifetime(provider):
+    """How long a temporary provider keeps an upload, in words."""
+    if provider.expiry:
+        return "expires in %s" % provider.expiry
+    return "keeps it for an unstated time"
 
 
 def build_queue(host, any_file, persistence):
@@ -107,8 +121,20 @@ def build_queue(host, any_file, persistence):
         reason = mismatch(provider, any_file, persistence)
         if reason:
             fail_usage(reason)
+        missing = provider.unavailable()
+        if missing:
+            print("error: " + missing, file=sys.stderr)
+            sys.exit(3)
         return [provider]
-    queue = [p for p in PROVIDERS if not mismatch(p, any_file, persistence)]
+    queue = []
+    for provider in PROVIDERS:
+        if mismatch(provider, any_file, persistence):
+            continue
+        missing = provider.unavailable()
+        if missing:
+            print("left out: " + missing, file=sys.stderr)
+            continue
+        queue.append(provider)
     if not queue:
         fail_usage("no provider fits these options")
     return queue
@@ -154,8 +180,12 @@ def upload_all(paths, queue):
             hit_transport_error = set()
             if not pending:
                 break
-            print("retrying %d file(s) from the top of the queue (lap %d of %d)"
-                  % (len(pending), lap, MAX_LAPS), file=sys.stderr)
+            route = ""
+            if http_post.proxy_in_use():
+                http_post.bypass_proxy()
+                route = ", bypassing the proxy"
+            print("retrying %d file(s) from the top of the queue (lap %d of %d%s)"
+                  % (len(pending), lap, MAX_LAPS, route), file=sys.stderr)
             for i in pending:
                 errors[i] = []  # this lap's reasons replace the last lap's
 
@@ -187,7 +217,9 @@ def upload_all(paths, queue):
                         print("✗ %s — %s" % (paths[i], exc), file=sys.stderr)
                     continue
 
-                expiry = " (expires in %s)" % provider.expiry if provider.expiry else ""
+                expiry = ""
+                if provider.persistence == "temporary":
+                    expiry = " (%s)" % _lifetime(provider)
                 for i, url in zip(batch, batch_urls):
                     urls[i] = url
                     pending.remove(i)
