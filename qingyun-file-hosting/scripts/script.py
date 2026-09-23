@@ -23,9 +23,16 @@ What it does:
        grouped under its count and total-size caps.
          - URL reply: the file is done.
          - Network or HTTP error: the provider is dropped for the rest of
-           the run, and its files wait for the next provider.
+           this lap, and its files wait for the next provider.
          - Any other reply: the file is not tried anywhere else, and the
            reply is reported as its error.
+       If any file is still pending once every provider has had a turn, the
+       whole queue runs one more time (a second lap) for the files still
+       pending — so a file that hit a transient network/HTTP error gets one
+       more turn at every provider, in the same order, instead of stopping
+       at the end of the first lap. A file a provider explicitly rejected
+       with a non-URL reply is not retried in the second lap: that reply is
+       a definite answer, not a blip.
     4. Prints to stdout the URL for a single file, or a JSON array of URLs
        in input order (null for a file that failed) for several. Per-file
        progress and errors go to stderr.
@@ -121,49 +128,64 @@ def batches(provider, indices, sizes):
         yield batch
 
 
+# A file still pending after one full pass through the queue gets exactly
+# one more full pass (a "retry lap") before it is reported as failed.
+MAX_LAPS = 2
+
+
 def upload_all(paths, queue):
-    """Walk the queue; return the URLs indexed like `paths` (None if failed)."""
+    """Walk the queue, up to MAX_LAPS times; return the URLs indexed like
+    `paths` (None if failed)."""
     sizes = [os.path.getsize(p) for p in paths]
     urls = [None] * len(paths)
     errors = [[] for _ in paths]
     pending = list(range(len(paths)))
 
-    for provider in queue:
-        eligible = []
-        for i in pending:
-            reason = provider.refusal(paths[i], sizes[i])
-            if reason:
-                errors[i].append(reason)
-            else:
-                eligible.append(i)
-
-        for batch in batches(provider, eligible, sizes):
-            try:
-                batch_urls = provider.upload([paths[i] for i in batch])
-            except TransportError as exc:
-                note = "%s: %s" % (provider.name, exc)
-                print("  %s — dropping %s for this run" % (note, provider.name),
-                      file=sys.stderr)
-                for i in eligible:
-                    if i in pending:
-                        errors[i].append(note)
-                break
-            except RejectedError as exc:
-                for i in batch:
-                    errors[i] = [str(exc)]
-                    pending.remove(i)
-                    print("✗ %s — %s" % (paths[i], exc), file=sys.stderr)
-                continue
-
-            expiry = " (expires in %s)" % provider.expiry if provider.expiry else ""
-            for i, url in zip(batch, batch_urls):
-                urls[i] = url
-                pending.remove(i)
-                print("✓ %s → %s [%s%s]" % (paths[i], url, provider.name, expiry),
-                      file=sys.stderr)
-
+    for lap in range(1, MAX_LAPS + 1):
         if not pending:
             break
+        if lap > 1:
+            print("retrying %d file(s) from the top of the queue (lap %d of %d)"
+                  % (len(pending), lap, MAX_LAPS), file=sys.stderr)
+            for i in pending:
+                errors[i] = []  # this lap's reasons replace the last lap's
+
+        for provider in queue:
+            eligible = []
+            for i in pending:
+                reason = provider.refusal(paths[i], sizes[i])
+                if reason:
+                    errors[i].append(reason)
+                else:
+                    eligible.append(i)
+
+            for batch in batches(provider, eligible, sizes):
+                try:
+                    batch_urls = provider.upload([paths[i] for i in batch])
+                except TransportError as exc:
+                    note = "%s: %s" % (provider.name, exc)
+                    print("  %s — dropping %s for this lap" % (note, provider.name),
+                          file=sys.stderr)
+                    for i in eligible:
+                        if i in pending:
+                            errors[i].append(note)
+                    break
+                except RejectedError as exc:
+                    for i in batch:
+                        errors[i] = [str(exc)]
+                        pending.remove(i)
+                        print("✗ %s — %s" % (paths[i], exc), file=sys.stderr)
+                    continue
+
+                expiry = " (expires in %s)" % provider.expiry if provider.expiry else ""
+                for i, url in zip(batch, batch_urls):
+                    urls[i] = url
+                    pending.remove(i)
+                    print("✓ %s → %s [%s%s]" % (paths[i], url, provider.name, expiry),
+                          file=sys.stderr)
+
+            if not pending:
+                break
 
     for i in pending:
         print("✗ %s — no provider took it: %s" % (paths[i], "; ".join(errors[i])),
