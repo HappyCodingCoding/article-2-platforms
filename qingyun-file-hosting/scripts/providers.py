@@ -136,6 +136,53 @@ class Kappa(Provider):
         return [_require_url(self.name, url or reply)]
 
 
+class Scdn(Provider):
+    name = "scdn"
+    # An image is deleted after 60 days without a view.
+    persistence = "temporary"
+    accepts = "image"
+    expiry = "60 days without a view"
+    # It takes these, but only JPEG and GIF come back byte-identical when
+    # outputFormat names their own format. A PNG is reduced to a 256-colour
+    # palette even with outputFormat=png, and BMP and TIFF have no matching
+    # outputFormat. WebP is untested, so it is left out.
+    allowed_extensions = (".jpg", ".jpeg", ".gif", ".png", ".bmp", ".tif", ".tiff")
+    converted_extensions = {
+        ".png": "a 256-colour PNG", ".bmp": "PNG", ".tif": "PNG", ".tiff": "PNG",
+    }
+    # The limit depends on the output format; the API names it in its error.
+    max_bytes_by_extension = {
+        ".jpg": 5 * 1000 * 1000, ".jpeg": 5 * 1000 * 1000, ".gif": 3 * 1000 * 1000,
+    }
+    max_file_bytes = 5 * 1000 * 1000
+    max_request_bytes = 5 * 1000 * 1000
+    output_format_by_extension = {".jpg": "jpg", ".jpeg": "jpg", ".gif": "gif"}
+    api = "https://img.scdn.io/api/v1.php"
+
+    def refusal(self, path, size):
+        reason = super().refusal(path, size)
+        if reason:
+            return reason
+        ext = os.path.splitext(path)[1].lower()
+        if size > self.max_bytes_by_extension[ext]:
+            return "%s allows at most %s per %s file" % (
+                self.name, _megabytes(self.max_bytes_by_extension[ext]), ext)
+        return None
+
+    def upload(self, paths):
+        # Without outputFormat the host turns every static image into WebP.
+        ext = os.path.splitext(paths[0])[1].lower()
+        reply = post_files(
+            self.api, {"outputFormat": self.output_format_by_extension[ext]},
+            "image", paths)
+        try:
+            payload = json.loads(reply)
+        except ValueError:
+            payload = None
+        url = payload.get("url") if isinstance(payload, dict) else None
+        return [_require_url(self.name, url or reply)]
+
+
 class Litterbox(Provider):
     name = "litterbox"
     persistence = "temporary"
@@ -259,11 +306,12 @@ class ImgCDN(Provider):
 # Ranked by observed reliability, most reliable first: hosts with no failed
 # uploads in testing ahead of those with some, ties broken by speed and by
 # how steady the service looks (imgcdn relies on a guest key that can be
-# rotated). catbox had a timeout and 502s during one outage, picrd slow
+# rotated; scdn has the fewest uploads behind it, has switched its default
+# link domain, and has needed a proxy bypass on this machine). catbox had a timeout and 502s during one outage, picrd slow
 # replies up to 21 s and a timeout, litterbox a 12h+ firewall block. sxcu is
 # last by choice, as an extra fallback. Every fallback queue is this list
 # filtered by the options, so each group keeps this order.
-PROVIDERS = [Uguu(), Kappa(), ImgBB(), ImgCDN(), Catbox(), Picrd(), Litterbox(), Sxcu()]
+PROVIDERS = [Uguu(), Kappa(), ImgBB(), ImgCDN(), Scdn(), Catbox(), Picrd(), Litterbox(), Sxcu()]
 PROVIDERS_BY_NAME = {p.name: p for p in PROVIDERS}
 
 

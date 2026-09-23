@@ -1,6 +1,6 @@
 ---
 name: qingyun-file-hosting
-description: Uploads one or more local files to a public file host and returns their URLs — one URL for one file, a JSON array for several. Providers, most reliable first, are uguu (temporary, 3h, any file, up to 128 MB), kappa (temporary — keeps files for an unstated time — any file, up to 100 MiB), ImgBB (permanent, images only, up to 32 MB, needs the user's own API key), imgcdn (temporary, 14 days, images only, up to 20 MB), Catbox (permanent, any file, up to 200 MB), picrd (permanent, images only, up to 10 MB), Litterbox (temporary, 24h, any file, up to 1 GB) and, as a last-resort fallback, sxcu (permanent, images only, up to 95 MB). `--host fallback` (default) tries each fitting provider in turn, most reliable first, until one succeeds, running the whole queue a second time for any file still pending after a transient error before giving up on it — with the proxy bypassed on that second lap when one is in use; `--host <name>` uses only that one. `--images-only` (default) / `--any-file` sets which file types are allowed and which providers qualify; `--persistence temporary` (default) / `permanent` limits the queue to providers whose links never expire. ImgBB joins the fallback queue only when its key is set; `--host imgbb` without one asks the user for it. Every other host is anonymous — no account, no deletion afterwards. Triggers on "upload this file", "host this image", "give me a public link for", "图床", "上传文件", "file hosting", "catbox", "picrd", "imgbb", "imgcdn", "uguu", "kappa", "litterbox", "sxcu". Does not download, convert or compress files.
+description: Uploads one or more local files to a public file host and returns their URLs — one URL for one file, a JSON array for several. Providers, most reliable first, are uguu (temporary, 3h, any file, up to 128 MB), kappa (temporary — keeps files for an unstated time — any file, up to 100 MiB), ImgBB (permanent, images only, up to 32 MB, needs the user's own API key), imgcdn (temporary, 14 days, images only, up to 20 MB), scdn (img.scdn.io; temporary, deleted after 60 days without a view, JPEG and GIF only, up to 5 MB), Catbox (permanent, any file, up to 200 MB), picrd (permanent, images only, up to 10 MB), Litterbox (temporary, 24h, any file, up to 1 GB) and, as a last-resort fallback, sxcu (permanent, images only, up to 95 MB). `--host fallback` (default) tries each fitting provider in turn, most reliable first, until one succeeds, running the whole queue a second time for any file still pending after a transient error before giving up on it — with the proxy bypassed on that second lap when one is in use; `--host <name>` uses only that one. `--images-only` (default) / `--any-file` sets which file types are allowed and which providers qualify; `--persistence temporary` (default) / `permanent` limits the queue to providers whose links never expire. ImgBB joins the fallback queue only when its key is set; `--host imgbb` without one asks the user for it. Every other host is anonymous — no account, no deletion afterwards. Triggers on "upload this file", "host this image", "give me a public link for", "图床", "上传文件", "file hosting", "catbox", "picrd", "imgbb", "imgcdn", "scdn", "img.scdn.io", "uguu", "kappa", "litterbox", "sxcu". Does not download, convert or compress files.
 ---
 
 # File Hosting
@@ -16,7 +16,7 @@ Callable by explicit options or by natural language: take the files from whateve
 | Option | Type | Values | Default | Description |
 |---|---|---|---|---|
 | `<file> …` | option (required) | one or more local file paths | — | The files to upload, in the order their URLs are returned. |
-| `--host` | option | `fallback` / `catbox` / `picrd` / `imgbb` / `imgcdn` / `uguu` / `kappa` / `litterbox` / `sxcu` | `fallback` | `fallback` builds a queue of every provider that fits the other options, ordered by stability and reliability (the Providers table, top first), and moves a file down the queue until a provider takes it; ImgBB is in it only when its API key is set. A named host is for a user who wants that provider specifically; the run fails rather than falling back if it cannot take the file. `imgbb` without a key stops before uploading so the user can supply one (Step 2). |
+| `--host` | option | `fallback` / `uguu` / `kappa` / `imgbb` / `imgcdn` / `scdn` / `catbox` / `picrd` / `litterbox` / `sxcu` | `fallback` | `fallback` builds a queue of every provider that fits the other options, ordered by stability and reliability (the Providers table, top first), and moves a file down the queue until a provider takes it; ImgBB is in it only when its API key is set. A named host is for a user who wants that provider specifically; the run fails rather than falling back if it cannot take the file. `imgbb` without a key stops before uploading so the user can supply one (Step 2). |
 | `--images-only` / `--any-file` | flag pair | — | `--images-only` | `--images-only` requires every file to be an image, and qualifies every provider that accepts images, including those that take any file. `--any-file` allows any file type and qualifies only providers that accept any file type. |
 | `--persistence` | option | `temporary` / `permanent` | `temporary` | `temporary` qualifies every provider, whether its links expire or not. `permanent` qualifies only providers whose links never expire — use it for links meant to stay up, such as ones published in an article. |
 
@@ -30,6 +30,7 @@ Ranked by observed reliability, most reliable first — the order every fallback
 | `kappa` | temporary — retention not stated | any file, `.exe` `.html` `.svg` included | 100 MB | none found; every type tested was kept |
 | `imgbb` | permanent — uploads land in the user's own ImgBB account | every other image type | 32 MB | non-images (refused); `.svg` `.tif` `.tiff` `.bmp` (served as JPEG), `.heic` `.heif` (served as AVIF) |
 | `imgcdn` | temporary — deleted after 14 days | `.jpg` `.jpeg` `.png` `.gif` `.webp` | 20 MB | `.bmp` (served as PNG); every other type (refused) |
+| `scdn` | temporary — deleted after 60 days without a view | `.jpg` `.jpeg` (5 MB), `.gif` (3 MB) | 5 MB | `.png` (served as a 256-colour PNG), `.bmp` `.tif` `.tiff` (served as PNG); every other type, `.webp` included (refused or untested) |
 | `catbox` | permanent | any file | 200 MB | `.exe` `.scr` `.cpl` `.jar` `.doc*` (refused) |
 | `picrd` | permanent | `.png` `.jpg` `.jpeg` `.webp` `.gif` | 10 MB | every other type (refused) |
 | `litterbox` | temporary — deleted after 24h | any file | 1 GB | `.exe` `.scr` `.cpl` `.jar` `.doc*` (refused) |
@@ -41,7 +42,7 @@ The resulting queues (imgbb only when its API key is set):
 
 | Options | Queue |
 |---|---|
-| `--images-only`, `--persistence temporary` (defaults) | uguu → kappa → imgbb → imgcdn → catbox → picrd → litterbox → sxcu |
+| `--images-only`, `--persistence temporary` (defaults) | uguu → kappa → imgbb → imgcdn → scdn → catbox → picrd → litterbox → sxcu |
 | `--images-only`, `--persistence permanent` | imgbb → catbox → picrd → sxcu |
 | `--any-file`, `--persistence temporary` | uguu → kappa → catbox → litterbox |
 | `--any-file`, `--persistence permanent` | catbox |
@@ -50,6 +51,7 @@ Types some hosts pass on get shorter queues out of those:
 
 | File type | temporary | permanent |
 |---|---|---|
+| `.png` `.webp` | uguu → kappa → imgbb → imgcdn → catbox → picrd → litterbox → sxcu | imgbb → catbox → picrd → sxcu |
 | `.svg` | kappa → catbox → litterbox | catbox |
 | `.tif` `.tiff` | uguu → kappa → catbox → litterbox → sxcu | catbox → sxcu |
 | `.heic` `.heif` `.bmp` | uguu → kappa → catbox → litterbox | catbox |
@@ -74,13 +76,13 @@ The ImgBB key is the user's own credential. The script reads it from the `IMGBB_
 
 ### Step 1 — Resolve the files and options
 
-Confirm each path exists, then state the resolved options. When `--any-file` is not given, every file must be an image; if one is not, say which and ask whether to switch to `--any-file` instead of running. When `--host fallback` and `--persistence temporary` are both in effect, say that the file will most likely land on a temporary host, since the most reliable hosts come first and the top two are temporary — Uguu (a fixed 3h) first, then kappa (an unstated time), imgcdn (14 days) or Litterbox (24h) — and that `--persistence permanent` keeps it to hosts whose links never expire. If the files are private, point out that the upload is public and cannot be deleted, and wait for a go-ahead.
+Confirm each path exists, then state the resolved options. When `--any-file` is not given, every file must be an image; if one is not, say which and ask whether to switch to `--any-file` instead of running. When `--host fallback` and `--persistence temporary` are both in effect, say that the file will most likely land on a temporary host, since the most reliable hosts come first and the top two are temporary — Uguu (a fixed 3h) first, then kappa (an unstated time), imgcdn (14 days), scdn (60 days without a view) or Litterbox (24h) — and that `--persistence permanent` keeps it to hosts whose links never expire. If the files are private, point out that the upload is public and cannot be deleted, and wait for a go-ahead.
 
 ### Step 2 — Upload (script)
 
 Run:
 ```
-python3 qingyun-file-hosting/scripts/script.py <file> [<file> ...] [--host <fallback|catbox|picrd|imgbb|imgcdn|uguu|kappa|litterbox|sxcu>] [--any-file] [--persistence permanent]
+python3 qingyun-file-hosting/scripts/script.py <file> [<file> ...] [--host <fallback|uguu|kappa|imgbb|imgcdn|scdn|catbox|picrd|litterbox|sxcu>] [--any-file] [--persistence permanent]
 ```
 Omit each option that is at its default.
 
@@ -98,7 +100,7 @@ If the user gives a key without being asked, save it the same way before running
 
 ### Step 3 — Report
 
-Give the user the URL(s) in input order, naming the provider for each and the expiry for a link from a temporary host. When a file landed on sxcu, say so, and that sxcu's terms grant it rights to reuse the file (see Gotchas). For each failed file, quote its error — from the retry lap if it ran one, since that overwrites the first lap's reasons for a file that is still pending. If every provider failed with a network error on both laps, say the hosts look unreachable from this machine, through the proxy and without it, and ask the user to check their network rather than retrying again. See Gotchas for the failures worth naming to the user by their cause.
+Give the user the URL(s) in input order, naming the provider for each and the expiry for a link from a temporary host. When a file landed on sxcu, say so, and that sxcu's terms grant it rights to reuse the file; when it landed on scdn, say that scdn lists uploads publicly (see Gotchas). For each failed file, quote its error — from the retry lap if it ran one, since that overwrites the first lap's reasons for a file that is still pending. If every provider failed with a network error on both laps, say the hosts look unreachable from this machine, through the proxy and without it, and ask the user to check their network rather than retrying again. See Gotchas for the failures worth naming to the user by their cause.
 
 ## Gotchas
 
@@ -113,6 +115,8 @@ Give the user the URL(s) in input order, naming the provider for each and the ex
 **A local proxy can break the download link uguu just returned, separately from the upload.** The retry lap's proxy bypass (Step 2) only covers the script's own upload requests; it does not cover fetching the link back afterward. This machine's proxy has been seen to fail TLS to uguu's `*.uguu.se` file subdomains specifically (the same failure mode already seen with img.scdn.io, litterbox and imgcdn). If verifying a `uguu` link fails right after a successful upload, retry that fetch directly (bypassing the proxy) before suspecting the upload itself.
 
 **kappa never says how long it keeps a file.** Neither its site nor its API states a retention period, and its terms reserve the right to remove content at any time, so the skill counts it as temporary and never uses it for `--persistence permanent`. When a file lands there, say its lifetime is unknown. Its terms also require users to be 18 or older, and say third-party commercial use needs its prior approval.
+
+**scdn shows uploads to the public, and reworks some.** An image uploaded to img.scdn.io can appear on its public explore page and random-image API, and the host AI-tags and describes it; keep private images off it with `--host`. Only JPEG and GIF come back unchanged — it reduces a PNG to 256 colours even when asked to keep PNG, so the skill passes PNGs on. Its size limit depends on the format: 5 MB for JPEG, 3 MB for GIF; larger files can have the connection dropped instead of an error. It allows 5 uploads per 5 seconds (120 a minute) — past that it answers `HTTP 429`. Its links now come from `img.cdn1.vip`, not `img.scdn.io`. On this machine, img.scdn.io has needed a proxy bypass before; the retry lap's direct route covers that.
 
 **sxcu's terms take broad rights over what it hosts.** Its Terms of Service grant it an irrevocable, worldwide licence to anything uploaded, including the right to sell it and use it in advertising. That is why it sits last, reached only when every other fitting host has failed; tell the user whenever a file lands there. It also allows 4 uploads per minute — past that it answers `HTTP 429` like picrd — and refuses `.bmp` although its own docs list it.
 

@@ -78,6 +78,28 @@ browser. Ruled out in favour of appending the reply's `ext`, since some
 readers, such as markdown importers, decide how to show a link by its
 extension.
 
+## scdn uploads
+
+### `outputFormat=auto`
+
+The default: every static image is turned into WebP, usually much smaller.
+Ruled out because the skill only lands a file where it is kept as uploaded;
+the format is asked for explicitly instead, and only JPEG and GIF survive
+that unchanged.
+
+### `storage_destination=telegram`
+
+Stores the image on Telegram, which the site says does not actively delete
+images, unlike its own storage's 60 days without a view. Ruled out because
+nothing promises that either, so scdn stays temporary whichever storage is
+used.
+
+### Choosing a `cdn_domain`
+
+The API lets the caller pick among seven CDN domains, including mainland
+China ones. Ruled out in favour of the site's default, since no domain has
+been tested to be steadier than another.
+
 ## sxcu uploads
 
 ### Ranking sxcu by reliability like the other hosts
