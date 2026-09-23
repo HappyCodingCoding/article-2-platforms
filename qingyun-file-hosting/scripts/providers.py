@@ -32,6 +32,13 @@ class Provider:
     max_request_bytes = 0     # total size cap for one multi-file request
     allowed_extensions = ()   # when set, the only extensions it takes
     banned_extensions = ()
+    # Types it takes but serves back as a different format, losing what the
+    # original was (e.g. an SVG's vectors). Passed on like a refused type.
+    converted_extensions = {}  # extension -> the format it is served as
+
+    def unavailable(self):
+        """Why this provider cannot be used at all on this machine, or None."""
+        return None
 
     def refusal(self, path, size):
         """Why this provider cannot take the file, or None if it can."""
@@ -40,14 +47,93 @@ class Provider:
             return "%s does not take %s files" % (self.name, ext)
         if any(ext.startswith(banned) for banned in self.banned_extensions):
             return "%s refuses %s files" % (self.name, ext)
+        if ext in self.converted_extensions:
+            return "%s would serve %s files as %s" % (
+                self.name, ext, self.converted_extensions[ext])
         if size > self.max_file_bytes:
-            return "%s allows at most %d MB per file" % (
-                self.name, self.max_file_bytes // MB)
+            return "%s allows at most %s per file" % (
+                self.name, _megabytes(self.max_file_bytes))
         return None
 
     def upload(self, paths):
         """Upload `paths` in one request and return their URLs in order."""
         raise NotImplementedError
+
+
+class Uguu(Provider):
+    name = "uguu"
+    persistence = "temporary"
+    accepts = "any"
+    expiry = "3h"                # fixed by the site; the API takes no expiry field
+    max_file_bytes = 128 * MB
+    max_request_bytes = 128 * MB
+    # Confirmed by probing real uploads (not published in the API docs):
+    # refused. .doc .php .js .cgi .pl .py .sh .bmp .cpl are all accepted.
+    banned_extensions = (".exe", ".scr", ".jar", ".docx", ".html", ".bat",
+                         ".com", ".msi", ".svg")
+    api = "https://uguu.se/upload"
+
+    def upload(self, paths):
+        reply = post_files(self.api, {}, "files[]", paths)
+        try:
+            payload = json.loads(reply)
+        except ValueError:
+            payload = None
+        files = payload.get("files") if isinstance(payload, dict) else None
+        url = files[0].get("url") if isinstance(files, list) and files else None
+        return [_require_url(self.name, url or reply)]
+
+
+class Sxcu(Provider):
+    name = "sxcu"
+    persistence = "permanent"   # nothing expires unless self_destruct is sent
+    accepts = "image"
+    # Whether the stated 95 MB is decimal or MiB is unknown; the decimal
+    # figure is the smaller of the two, so it never sends a file sxcu refuses.
+    max_file_bytes = 95 * 1000 * 1000
+    max_request_bytes = 95 * 1000 * 1000
+    # Its docs also list .bmp, but a real .bmp upload was refused.
+    allowed_extensions = (".png", ".jpg", ".jpeg", ".gif", ".webp",
+                          ".tif", ".tiff", ".ico")
+    api = "https://sxcu.net/api/files/create"
+    # The API docs ask every client to name itself as "name/version (+url)".
+    user_agent = ("qingyun-file-hosting/1.0 "
+                  "(+https://github.com/HappyCodingCoding/article-2-platforms)")
+
+    def upload(self, paths):
+        # noembed makes the reply's url the file itself, not its viewer page.
+        reply = post_files(self.api, {"noembed": ""}, "file", paths,
+                           user_agent=self.user_agent)
+        try:
+            payload = json.loads(reply)
+        except ValueError:
+            payload = None
+        url = payload.get("url") if isinstance(payload, dict) else None
+        return [_require_url(self.name, url or reply)]
+
+
+class Kappa(Provider):
+    name = "kappa"
+    # It states no retention and its terms allow removing content at any
+    # time, so it is never offered as permanent.
+    persistence = "temporary"
+    accepts = "any"           # took every type tested, .exe .html .svg included
+    max_file_bytes = 100 * MB
+    max_request_bytes = 100 * MB
+    api = "https://kappa.lol/api/upload"
+
+    def upload(self, paths):
+        # The reply is JSON; `link` has no extension, and the site ignores one
+        # appended to it, so `ext` is added back for readers that go by it.
+        reply = post_files(self.api, {}, "file", paths)
+        try:
+            payload = json.loads(reply)
+        except ValueError:
+            payload = None
+        url = None
+        if isinstance(payload, dict) and payload.get("link"):
+            url = payload["link"] + (payload.get("ext") or "")
+        return [_require_url(self.name, url or reply)]
 
 
 class Litterbox(Provider):
@@ -104,6 +190,47 @@ class Picrd(Provider):
         return [_require_url(self.name, url or reply)]
 
 
+class ImgBB(Provider):
+    name = "imgbb"
+    persistence = "permanent"   # nothing expires unless `expiration` is sent
+    accepts = "image"           # every type script.py counts as an image
+    converted_extensions = {
+        ".svg": "JPEG", ".tif": "JPEG", ".tiff": "JPEG", ".bmp": "JPEG",
+        ".heic": "AVIF", ".heif": "AVIF",
+    }
+    max_file_bytes = 32 * 1000 * 1000
+    max_request_bytes = 32 * 1000 * 1000
+    api = "https://api.imgbb.com/1/upload"
+    # A personal key from the user's own ImgBB account. The environment
+    # variable wins over the file.
+    key_env = "IMGBB_API_KEY"
+    key_file = os.path.expanduser("~/.config/qingyun-file-hosting/imgbb.key")
+
+    def key(self):
+        key = os.environ.get(self.key_env, "").strip()
+        if not key and os.path.isfile(self.key_file):
+            with open(self.key_file, encoding="utf-8") as fh:
+                key = fh.read().strip()
+        return key or None
+
+    def unavailable(self):
+        if self.key():
+            return None
+        return "imgbb needs an API key: set %s or save it to %s" % (
+            self.key_env, self.key_file)
+
+    def upload(self, paths):
+        # The reply is JSON; the direct link is its data.url.
+        reply = post_files(self.api, {"key": self.key()}, "image", paths)
+        try:
+            payload = json.loads(reply)
+        except ValueError:
+            payload = None
+        data = payload.get("data") if isinstance(payload, dict) else None
+        url = data.get("url") if isinstance(data, dict) else None
+        return [_require_url(self.name, url or reply)]
+
+
 class ImgCDN(Provider):
     name = "imgcdn"
     # The site calls its uploads permanent, but that applies to accounts; a
@@ -117,6 +244,7 @@ class ImgCDN(Provider):
     # Images outside this list (.svg, .tiff, .heic, ...) are refused with a
     # non-URL reply, so they are passed on before being sent instead.
     allowed_extensions = (".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp")
+    converted_extensions = {".bmp": "PNG"}
     api = "https://imgcdn.dev/api/1/upload"
     # The public guest key the site publishes at https://imgcdn.dev/page/api
     # for anonymous uploads; it belongs to no account.
@@ -128,10 +256,20 @@ class ImgCDN(Provider):
         return [_require_url(self.name, reply)]
 
 
-# Ranked by stability and reliability, most reliable first. Every fallback
-# queue is this list filtered by the options, so each group keeps this order.
-PROVIDERS = [Catbox(), Picrd(), ImgCDN(), Litterbox()]
+# Ranked by observed reliability, most reliable first: hosts with no failed
+# uploads in testing ahead of those with some, ties broken by speed and by
+# how steady the service looks (imgcdn relies on a guest key that can be
+# rotated). catbox had a timeout and 502s during one outage, picrd slow
+# replies up to 21 s and a timeout, litterbox a 12h+ firewall block. sxcu is
+# last by choice, as an extra fallback. Every fallback queue is this list
+# filtered by the options, so each group keeps this order.
+PROVIDERS = [Uguu(), Kappa(), ImgBB(), ImgCDN(), Catbox(), Picrd(), Litterbox(), Sxcu()]
 PROVIDERS_BY_NAME = {p.name: p for p in PROVIDERS}
+
+
+def _megabytes(n):
+    """A size cap as the host states it: in MiB or in decimal megabytes."""
+    return "%d MB" % (n // MB if n % MB == 0 else n // (1000 * 1000))
 
 
 def _require_url(provider_name, reply):
