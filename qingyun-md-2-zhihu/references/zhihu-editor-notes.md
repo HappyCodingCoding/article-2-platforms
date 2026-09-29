@@ -35,9 +35,11 @@
   几秒内两张都变成 `https://pic-private.zhihu.com/…`，位置和尺寸都正确，没有“上传失败”。
   那次网络记录没有抓到转存所走的请求，所以转存具体调用哪个接口未经确认。
 
-  **所以本 skill 先把每张图上传到图床，把 markdown 里的图片换成图床地址再导入**，
-  由导入流程自己转存；图床拒收的图片（如 HEIC、SVG）才换成纯文本占位符
-  （`【ZHIHU-IMG-N】`），避免触发必然失败的本地路径转存，导入完成后再逐张手动插入。
+  **所以本 skill 先经 `qingyun-process-md`（再经 `qingyun-file-hosting`）把每张图上传到图床，
+  把 markdown 里的图片换成图床地址再导入**，由导入流程自己转存；所有图床都没收下的图片
+  才留作纯文本占位符（`【IMG-N】`），避免触发必然失败的本地路径转存，导入完成后再逐张手动插入。
+  目前只实测过 img.scdn.io 的地址能被知乎转存；`qingyun-file-hosting` 队列里的其他图床
+  （uguu、kappa、catbox 等）能否被知乎服务器抓到，尚未验证。
 
 - 转存后的图片块在编辑器顶层是 `<figure>`，前后各有一个空 `<div>`。
 - 在页面 JS 里手工 `POST /api/uploaded_images`（`url` + `source=article`，带 `_xsrf`）
@@ -95,7 +97,7 @@
 
 **选中占位符用键盘**：单击置入光标，再 `End`、`Shift+Home` 选中整行。三击只在浏览器
 窗口处于前台时才会选中（自动化操作时它常常不在前台），而且选区可能连行尾换行一起选中
-（`getSelection()` 读到 `【ZHIHU-IMG-N】\n`），这时按 Backspace 会删掉整段，光标落到
+（`getSelection()` 读到 `【IMG-N】\n`），这时按 Backspace 会删掉整段，光标落到
 相邻段落里，而不是留在一个空段落中。插入前要确认两个邻居之间确实有一个空块、
 且光标就在里面；否则点进后一段的第一行，
 按 Home、Enter 把它往下挤，再按 ArrowUp 进入新建的空段落。不要在前一段按 End 再按 Enter：

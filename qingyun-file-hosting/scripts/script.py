@@ -6,6 +6,7 @@ Usage:
     python3 script.py <file> [<file> ...] [--host fallback|catbox|picrd|imgbb|imgcdn|uguu|kappa|litterbox|sxcu]
                       [--images-only | --any-file]
                       [--persistence temporary|permanent]
+                      [--exclude HOST[,HOST...]]
 
 What it does:
     1. Checks every file exists. With --images-only (the default), also
@@ -15,7 +16,8 @@ What it does:
        fits the other options, in providers.PROVIDERS order (most reliable
        first): --any-file
        keeps only providers that accept any file type, --persistence
-       permanent keeps only permanent ones. A provider that needs something
+       permanent keeps only permanent ones, and --exclude drops the providers
+       it names. A provider that needs something
        this machine lacks (imgbb without an API key) is left out, with a
        note. A named --host is the whole queue, and must fit the other
        options and be usable too.
@@ -78,7 +80,15 @@ def parse_args():
     parser.add_argument(
         "--persistence", default="temporary", choices=["temporary", "permanent"],
         help="permanent uses only providers that never expire uploads")
-    return parser.parse_args()
+    parser.add_argument(
+        "--exclude", default="", metavar="HOST[,HOST...]",
+        help="comma-separated providers to leave out of the queue")
+    args = parser.parse_args()
+    args.exclude = [h.strip().lower() for h in args.exclude.split(",") if h.strip()]
+    unknown = [h for h in args.exclude if h not in PROVIDERS_BY_NAME]
+    if unknown:
+        parser.error("unknown provider(s) in --exclude: " + ", ".join(unknown))
+    return args
 
 
 def fail_usage(message):
@@ -115,8 +125,10 @@ def _lifetime(provider):
     return "keeps it for an unstated time"
 
 
-def build_queue(host, any_file, persistence):
+def build_queue(host, any_file, persistence, exclude=()):
     if host != "fallback":
+        if host in exclude:
+            fail_usage("--host %s is also named in --exclude" % host)
         provider = PROVIDERS_BY_NAME[host]
         reason = mismatch(provider, any_file, persistence)
         if reason:
@@ -128,7 +140,7 @@ def build_queue(host, any_file, persistence):
         return [provider]
     queue = []
     for provider in PROVIDERS:
-        if mismatch(provider, any_file, persistence):
+        if provider.name in exclude or mismatch(provider, any_file, persistence):
             continue
         missing = provider.unavailable()
         if missing:
@@ -238,7 +250,7 @@ def upload_all(paths, queue):
 def main():
     args = parse_args()
     check_files(args.files, args.any_file)
-    queue = build_queue(args.host, args.any_file, args.persistence)
+    queue = build_queue(args.host, args.any_file, args.persistence, args.exclude)
     print("queue: " + " → ".join(p.name for p in queue), file=sys.stderr)
 
     urls = upload_all(args.files, queue)
