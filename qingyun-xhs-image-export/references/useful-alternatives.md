@@ -61,3 +61,32 @@ stop them):
 
 Injecting a third-party rendering library (html2canvas) from a CDN into the
 Xiaohongshu page was refused by the agent's own safety checks.
+
+## Changing the aspect ratio (`--aspects`)
+
+The 一键排版 card size is fixed at 900×1500 in the editor's own code, with no
+setting for it, so a 3:4 copy is made after export. The chosen method pads
+the card at the sides with its own edge colour and loses nothing.
+
+### Cropping to 3:4
+
+Keeping the full width and cutting the height to 1920 px keeps the card at
+full size on a phone. Ruled out because XHS fills every card down to the
+bottom with paginated text: cropping removes 480 px — about a fifth of the
+card, several lines of the article — from every card but, sometimes, a last
+card that ends in blank space.
+
+## Setting the title of an imported document (Step 4.6.5)
+
+从文件导入 fills only the body, so the document's title arrives as its first
+block. The chosen method lifts it inside the editor after the import, which
+works the same for every format the dialog accepts.
+
+### Stripping the title from the file before uploading
+
+A script could take the first heading out of a `.md`, the first line out of a
+`.txt`, and the first paragraph out of a `.docx` (by editing
+`word/document.xml` inside the zip) and upload that copy, so the editor never
+has to be changed. Ruled out as the main path because it needs a separate
+method per format and cannot handle a binary `.doc`; it is the fallback if
+the editor's handling of the lift changes.

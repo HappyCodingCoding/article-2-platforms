@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Main script for the qingyun-xhs-image-export skill: receives the card
-images Xiaohongshu (小红书) renders for a 文字配图 draft and saves them to
-a local folder.
+images Xiaohongshu (小红书) renders for a 写长文 note's 一键排版 layout and
+saves them to a local folder, in each aspect ratio asked for.
 
 Usage:
-    python3 script.py receive --output-dir <dir> [--prefix xhs-card] [--timeout 600]
+    python3 script.py receive --output-dir <dir> [--prefix xhs-card] [--aspects 3:5,3:4] [--timeout 600]
 
 Why a receiver is needed: after 下一步, the publish page holds every
 rendered card as a `blob:` URL that only that page can read, and the page
@@ -24,10 +24,13 @@ same-origin.
     3. Serves the receiver page at /<token>. That page reads window.name,
        clears it, checks the token, posts every image to
        /<token>/image/<n>, then posts {title, count} to /<token>/done.
-    4. On done: names each image <prefix>-<n>.<ext>, with the extension
-       taken from the file's own bytes (XHS renders JPEG), reads each
-       image's pixel size from its header, writes manifest.json to the
-       output dir, prints the manifest and exits 0.
+    4. On done, writes each card once per aspect in --aspects:
+       - 3:5, XHS's own ratio: the file exactly as received, saved as
+         <output-dir>/<prefix>-<n>.<ext>, with the extension taken from
+         the file's own bytes (XHS renders JPEG);
+       - 3:4: the card padded at the sides to 3:4 by pad.py, nothing cut
+         off, saved as <output-dir>/3x4/<prefix>-<n>.jpg.
+       Then writes manifest.json to the output dir, prints it and exits 0.
     5. Exits 1 with an error JSON when the page reports a problem, or when
        nothing has arrived within --timeout seconds.
 
@@ -42,6 +45,11 @@ import secrets
 import struct
 import sys
 import threading
+
+pad = None  # pad.py, imported by receive() only when an aspect needs padding
+
+NATIVE_ASPECT = (3, 5)  # every 一键排版 card is 900x1500, exported at 1440x2400
+SUPPORTED_ASPECTS = [NATIVE_ASPECT, (3, 4)]
 
 RECEIVER_PAGE = """<!doctype html>
 <meta charset="utf-8">
@@ -125,7 +133,45 @@ def webp_size(data):
     return None, None
 
 
+def parse_aspects(value):
+    """'3:5,3:4' -> [(3, 5), (3, 4)], keeping order and dropping repeats."""
+    aspects = []
+    for part in value.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            aspect = tuple(int(x) for x in part.split(":"))
+        except ValueError:
+            aspect = None
+        if aspect not in SUPPORTED_ASPECTS:
+            supported = ", ".join(aspect_label(a) for a in SUPPORTED_ASPECTS)
+            raise argparse.ArgumentTypeError(f"unsupported aspect {part!r}; use {supported}")
+        if aspect not in aspects:
+            aspects.append(aspect)
+    if not aspects:
+        raise argparse.ArgumentTypeError("no aspect given")
+    return aspects
+
+
+def aspect_label(aspect):
+    return f"{aspect[0]}:{aspect[1]}"
+
+
+def aspect_folder(aspect):
+    return f"{aspect[0]}x{aspect[1]}"
+
+
 def receive(args):
+    aspects = args.aspects
+    if any(a != NATIVE_ASPECT for a in aspects):
+        # Fail before the export, not after the images have arrived.
+        global pad
+        try:
+            import pad
+        except ImportError:
+            print(json.dumps({"error": "padding needs Pillow: pip install pillow"}), flush=True)
+            return 1
     output_dir = os.path.abspath(os.path.expanduser(args.output_dir))
     os.makedirs(output_dir, exist_ok=True)
     token = secrets.token_hex(8)
@@ -189,20 +235,29 @@ def receive(args):
     expected = result["done"].get("count", len(received))
     missing = [n for n in range(1, expected + 1) if n not in received]
     images = []
-    for n in sorted(received):
-        data = received[n]
-        ext, width, height = sniff_format(data)
-        path = os.path.join(output_dir, f"{args.prefix}-{n}{ext}")
-        with open(path, "wb") as f:
-            f.write(data)
-        images.append({"index": n, "path": path, "format": ext.lstrip("."),
-                       "width": width, "height": height, "bytes": len(data)})
+    for aspect in aspects:
+        folder = output_dir if aspect == NATIVE_ASPECT else os.path.join(output_dir, aspect_folder(aspect))
+        os.makedirs(folder, exist_ok=True)
+        for n in sorted(received):
+            data = received[n]
+            if aspect == NATIVE_ASPECT:
+                ext, width, height = sniff_format(data)
+            else:
+                data, width, height = pad.pad_to_aspect(data, *aspect)
+                ext = ".jpg"
+            path = os.path.join(folder, f"{args.prefix}-{n}{ext}")
+            with open(path, "wb") as f:
+                f.write(data)
+            images.append({"index": n, "aspect": aspect_label(aspect), "path": path,
+                           "format": ext.lstrip("."), "width": width, "height": height,
+                           "bytes": len(data)})
 
     manifest = {
         "title": result["done"].get("title", ""),
         "output_dir": output_dir,
+        "aspects": [aspect_label(a) for a in aspects],
         "expected": expected,
-        "saved": len(images),
+        "saved": len(received),
         "missing": missing,
         "images": images,
     }
@@ -219,6 +274,8 @@ def main():
     rec.add_argument("--output-dir", required=True, help="Folder the images and manifest.json are written to.")
     rec.add_argument("--prefix", default="xhs-card", help="File name prefix; files are <prefix>-<n>.<ext>.")
     rec.add_argument("--timeout", type=int, default=600, help="Seconds to wait for the export before giving up.")
+    rec.add_argument("--aspects", type=parse_aspects, default=parse_aspects("3:5,3:4"),
+                     help="Comma-separated aspect ratios to save: 3:5 (XHS's own), 3:4 (padded). Default: 3:5,3:4.")
     args = ap.parse_args()
     if args.stage == "receive":
         sys.exit(receive(args))

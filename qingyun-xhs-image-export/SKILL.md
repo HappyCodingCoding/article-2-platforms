@@ -1,6 +1,7 @@
 ---
 name: qingyun-xhs-image-export
-description: Exports the card images Xiaohongshu (小红书 / Rednote) renders from a 写长文 (long-form) note’s 一键排版 card layout to a local folder, in the user's own logged-in browser, driven through whatever browser control the current agent has — its own browser extension or built-in browser (Claude in Chrome, the Claude desktop app's browser pane, Codex's Chrome plugin) or the agent-neutral `bsk` CLI. Opens the draft from 草稿箱 (or picks up the editor or publish page already open), clicks 下一步 so XHS renders the final images, then carries them out of the page into a folder through a local receiver run by its script. A note not yet laid out gets a template first: the agent applies the 一键排版 template and background the user picks from the list, or the one that suits the copy, or the user lays it out in the editor (`--template`). `--draft` picks the draft by title, `--output-dir` and `--prefix` set where and how the files are saved, `--driver` forces a browser driver. Never publishes, never deletes a draft. Triggers on "下载小红书配图", "导出小红书图片", "save the XHS card images", "download the images the XHS editor made", "xhs-image-export", or a request to get the 一键排版 card images out of the Xiaohongshu editor.
+description: >-
+  Exports the card images Xiaohongshu (小红书 / Rednote) renders from a 写长文 (long-form) note’s 一键排版 card layout to a local folder, in the user's own logged-in browser, driven through whatever browser control the current agent has — its own browser extension or built-in browser (Claude in Chrome, the Claude desktop app's browser pane, Codex's Chrome plugin) or the agent-neutral `bsk` CLI. Opens the draft from 草稿箱 (or picks up the editor or publish page already open), clicks 下一步 so XHS renders the final images, then carries them out of the page into a folder through a local receiver run by its script. A note not yet laid out gets a template first: the agent applies the 一键排版 template and background the user picks from the list, or the one that suits the copy, or the user lays it out in the editor (`--template`). With no 长文笔记 draft, it imports a .docx/.doc/.md/.txt file into a new note through the editor's 从文件导入 (`--import`, or a path it asks for), or opens a blank note for the user to import or write themselves. Before 一键排版 and before 下一步 it asks whether the user wants to edit the note first (`--review`). `--draft` picks the draft by title, `--output-dir` and `--prefix` set where and how the files are saved, `--aspects` saves XHS's own 3:5 cards, side-padded 3:4 copies, or both (default), `--driver` forces a browser driver. Never publishes, never deletes a draft. Triggers on "下载小红书配图", "导出小红书图片", "save the XHS card images", "download the images the XHS editor made", "xhs-image-export", or a request to get the 一键排版 card images out of the Xiaohongshu editor.
 ---
 
 # Xiaohongshu Card Image Export
@@ -19,13 +20,16 @@ Callable by explicit options or by natural language: infer `--draft` from a quot
 | `--template` | option | `ask` / `agent` / `editor` / a template name, optionally with a background | `ask` | Only used when the note has not been laid out yet (Step 5.1); a note already in the card editor keeps its template. `ask` asks whether the agent applies a template or the user lays the note out in the editor, and for the agent route lists the templates and backgrounds in `references/templates.md` to choose from. `agent` lets the agent pick the template and background that suit the copy, without asking. `editor` leaves the layout to the user. A name such as `灵感备忘` or `灵感备忘 #4BA1FF` (or `灵感备忘 blue`, or `灵感备忘 2` for the second swatch) applies that template; without a background it gets the template's first swatch. |
 | `--output-dir` | option | a folder path | `~/Downloads/xhs-images/<note title>/` | Where the images and `manifest.json` are written. Created if missing; files from an earlier export with the same names are overwritten. |
 | `--prefix` | option | a file-name prefix | `xhs-card` | Files are saved as `<prefix>-<n>.<ext>`, numbered in card order from 1. |
+| `--review` | option | `ask` / `no` | `ask` | `ask` asks, right before the agent clicks 一键排版 (Step 5.1.3) and again right before 下一步 (Step 5.2), whether the user wants to edit the note's contents in the 长文 draft first, and waits while they do. `no` renders straight away, for unattended runs. Not asked when the run starts on a publish page that already holds images. |
+| `--aspects` | option | `3:5` / `3:4` / `3:5,3:4` | `3:5,3:4` | Which aspect ratios to save. `3:5` is XHS's own card ratio (1440×2400), saved exactly as rendered. `3:4` pads each card at the left and right with its own background colour (1800×2400): nothing is cut off, but the card fills 80% of the width, so its text shows smaller. `3:5,3:4` saves both. |
+| `--import` | option | path to a local `.docx`, `.doc`, `.md`, `.markdown` or `.txt` file | — | A document to turn into a new 长文 note when 草稿箱 has no 长文笔记 drafts (Step 4.6), through the editor's own 从文件导入. Infer it from any document path the user gives. Without it, a run that finds no drafts asks for a document, or for the user to import or write the note themselves (Step 4.3). When drafts do exist, ask whether to import it as a new note or export an existing draft. |
 | `--driver` | option | `auto` / `claude-in-chrome` / `claude-browser-pane` / `codex-chrome` / `bsk` | `auto` | How Step 2 reaches the browser. `auto` takes the running agent's first usable driver from `references/browser-drivers.md`. A named driver is for a user who prefers one; the run stops if it is unavailable. |
 
 ## Workflow
 
 ### Step 1 — Resolve the options
 
-State `--draft`, `--template`, `--prefix` and `--driver` as resolved. When `--template` names a template, check it, and its background if given, against `references/templates.md` now; if either is not there, show the matching row or the list and ask, before touching the browser. `--output-dir` is stated in Step 6, once the note title is known; when the user named a folder, state it now.
+State `--draft`, `--template`, `--review`, `--prefix`, `--aspects` and `--driver` as resolved. Any aspect other than `3:5` and `3:4` is not supported: say so and ask, rather than dropping it. When `--template` names a template, check it, and its background if given, against `references/templates.md` now; if either is not there, show the matching row or the list and ask, before touching the browser. `--output-dir` is stated in Step 6, once the note title is known; when the user named a folder, state it now.
 
 ### Step 2 — Choose the browser driver, then open Xiaohongshu
 
@@ -37,7 +41,8 @@ Every browser action from here to Step 9 goes through one driver. Choose it as `
    - open or reuse a tab in a browser where the user is logged into Xiaohongshu, and navigate that tab to a URL;
    - run JavaScript in the page and return its value, awaiting a promise;
    - click an element with real input;
-   - take a screenshot.
+   - take a screenshot;
+   - for an import (Step 4.6) only: put a local file into a page `<input type="file">` without opening a native file picker. A driver without it can still run everything else; Step 4.3 then offers the user to import the document themselves.
 
    If any is missing, stop and tell the user which one.
 4. **Make sure the browser is running.** If the driver reaches no browser — the browser is closed, or its extension is not connected — start it as the driver's section in the reference describes under **Browser not running**, then re-check. Stop and ask the user to open it only when the driver has no way to start it, or it is still unreachable after starting.
@@ -129,7 +134,10 @@ Then route by `--draft`:
    `counts['长文笔记']` must equal the number of `drafts`; if it is larger, scroll the drawer's list to the bottom and read it again.
 
 3. **Choose the draft** by how many 长文笔记 drafts there are:
-   - **None:** stop. Tell the user this browser's 草稿箱 has no 长文笔记 drafts — give the other tabs' `counts` if any are non-zero, since those notes are not 一键排版 cards — and that drafts are kept per browser, so a note written in another browser has to be exported from that one.
+   - **None:** close the drawer. With `--import`, import that document as a new note — Step 4.6. Without it, do not stop: tell the user this browser's 草稿箱 has no 长文笔记 drafts — give the other tabs' `counts` if any are non-zero, since those notes are not 一键排版 cards, and say that drafts are kept per browser, so a note written in another browser has to be exported from that one — then ask how to get a note:
+     - **Give a document to import** — the user replies with a path to a `.docx`, `.doc`, `.md`, `.markdown` or `.txt` file. Treat it as `--import` and go to Step 4.6. If the driver cannot upload files (Step 2.3), say so and offer the next answer instead.
+     - **Import or write it themselves** — open a blank 写长文 note for them as Step 4.6.2 does, and tell them they can use the toolbar's 从文件导入 (its last button) or type or paste the text, then say when the note is ready. When they do, poll the Step 3 snippet until the stage is `text` with a non-empty `title` or `bodyChars` above 0 — if the title is empty, offer to fill it as Step 4.6.5 does — wait for the autosave as Step 4.6.6 does, and continue at Step 5. If they lay it out with 一键排版 themselves and the stage is already `editor`, continue at Step 5 all the same: its substep 1 is skipped.
+     - **Stop** — end the run with nothing exported.
    - **One:** with `auto`, take it. With a title, take it only if it matches.
    - **Several:** with a title, take the one that matches; with `auto`, or when more than one matches, list them with their `saved` time and ask which.
 
@@ -147,6 +155,115 @@ Then route by `--draft`:
    ```
 
 5. Poll the Step 3 snippet until the stage is `editor`, `text` or `publish` and the count stops changing, then continue at Step 5 (`editor` or `text`) or Step 6 (`publish`). A draft saved after 一键排版 opens in the card editor; one saved before it opens in the text editor.
+6. **Import a document as a new note** — only from substep 3's **None** branch (with `--import` or a document the user gave there), or when the user chose to import although drafts exist.
+   1. **Check the file.** It must exist and end in `.docx`, `.doc`, `.md`, `.markdown` or `.txt` — the formats 从文件导入 accepts; otherwise stop and say so. Use its absolute path.
+   2. **Open a blank 写长文 note.** Navigate to `https://creator.xiaohongshu.com/publish/publish?from=menu&target=article`, find the **新的创作** button and real-click it, then poll the Step 3 snippet until the stage is `text` with an empty `title` and `bodyChars` 0. The import overwrites whatever the note holds, so it only ever goes into a blank one.
+   3. **Open 从文件导入 and capture its file input.** The toolbar buttons carry no text, so find this one by its tooltip. Its upload area creates a file input only when clicked and opens a native picker with it; this snippet intercepts that, so no picker opens, and puts the input in the page, tagged, for the driver's upload action:
+
+      ```js
+      (async () => {
+        const wait = ms => new Promise(r => setTimeout(r, ms));
+        const tipOf = async b => {
+          b.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
+          await wait(250);
+          const tips = [...document.querySelectorAll('.menu-tooltip, .d-popover-tooltip')].map(t => t.innerText.trim());
+          b.dispatchEvent(new MouseEvent('mouseleave', { bubbles: true }));
+          return tips[tips.length - 1] || '';
+        };
+        let importButton;
+        for (const b of document.querySelectorAll('.menu-items-container button.menu-item')) {
+          if ((await tipOf(b)) === '从文件导入') { importButton = b; break; }
+        }
+        if (!importButton) return JSON.stringify({ error: '从文件导入 not found' });
+        importButton.click();
+        let area;
+        for (let k = 0; k < 10 && !area; k++) { await wait(300); area = document.querySelector('.import-from-file-modal .upload-area'); }
+        if (!area) return JSON.stringify({ error: 'import dialog did not open' });
+        const nativeClick = HTMLInputElement.prototype.click;
+        const captured = [];
+        HTMLInputElement.prototype.click = function () {
+          if (this.type === 'file') { captured.push(this); return; }
+          return nativeClick.call(this);
+        };
+        try { area.click(); await wait(500); } finally { HTMLInputElement.prototype.click = nativeClick; }
+        const input = captured[0];
+        if (!input) return JSON.stringify({ error: 'no file input was created' });
+        if (!document.contains(input)) document.body.appendChild(input);
+        input.setAttribute('data-xhs-export', 'import');
+        input.setAttribute('aria-label', 'XHS-EXPORT-IMPORT-INPUT');
+        input.style.cssText = 'position:fixed;left:10px;top:10px;width:220px;height:36px;opacity:1;z-index:99999;display:block;visibility:visible';
+        return JSON.stringify({ accept: input.accept });
+      })()
+      ```
+
+      `accept` must read `.docx,.doc,.md,.markdown,.txt`. **Never click the input or the upload area with the driver** — that opens a native file picker automation cannot fill.
+   4. **Upload the file** into the tagged input with the driver's upload action — by `[data-xhs-export="import"]` or the `XHS-EXPORT-IMPORT-INPUT` label. The dialog closes by itself; poll the Step 3 snippet until `bodyChars` is above 0.
+   5. **Set the title.** 从文件导入 fills only the body: the document's own title arrives as its first paragraph, and the title field stays empty. Read the first block:
+
+      ```js
+      (() => {
+        const first = document.querySelector('.tiptap.ProseMirror > *');
+        return JSON.stringify({ tag: first ? first.tagName : null, text: first ? first.innerText.trim() : '' });
+      })()
+      ```
+
+      Treat it as the title when it is a heading (`H1`–`H3`), or a single line of at most 64 characters that does not end in 。！？ or another sentence ending. Otherwise ask the user for a title and leave the body as it is. To lift it, this snippet empties that block and joins it away. The block that moves up inherits the removed block's type, so a paragraph following an `H1` becomes an `H1`; the snippet then toggles that heading off with the toolbar's 一级标题 / 二级标题 button. Finally it fills the title field, which is a Vue-controlled textarea, so it goes through the native setter and an `input` event:
+
+      ```js
+      (async () => {
+        const wait = ms => new Promise(r => setTimeout(r, ms));
+        const body = document.querySelector('.tiptap.ProseMirror');
+        const first = body.firstElementChild, second = first.nextElementSibling;
+        const title = first.innerText.trim(), secondTag = second ? second.tagName : null;
+        const select = (node, start, end) => {
+          const range = document.createRange();
+          range.setStart(node, start);
+          range.setEnd(node, end);
+          const selection = getSelection();
+          selection.removeAllRanges();
+          selection.addRange(range);
+        };
+        if (second) {
+          body.focus();
+          select(first, 0, first.childNodes.length);
+          document.execCommand('delete');
+          await wait(200);
+          const emptied = body.firstElementChild;
+          if (emptied.innerText.trim() === '' && emptied.nextElementSibling) {
+            select(emptied.nextElementSibling, 0, 0);
+            document.execCommand('delete');
+            await wait(200);
+          }
+          const lead = body.firstElementChild;
+          const toggles = { H1: '一级标题', H2: '二级标题' };
+          if (lead.tagName !== secondTag && toggles[lead.tagName]) {
+            select(lead, 0, 0);
+            for (const b of document.querySelectorAll('.menu-items-container button.menu-item')) {
+              b.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
+              await wait(250);
+              const tips = [...document.querySelectorAll('.menu-tooltip, .d-popover-tooltip')].map(t => t.innerText.trim());
+              b.dispatchEvent(new MouseEvent('mouseleave', { bubbles: true }));
+              if (tips[tips.length - 1] === toggles[lead.tagName]) { b.click(); break; }
+            }
+            await wait(300);
+          }
+        }
+        const ta = document.querySelector('textarea[placeholder="输入标题"]');
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(ta, title.slice(0, ta.maxLength || 64));
+        ta.dispatchEvent(new Event('input', { bubbles: true }));
+        await wait(500);
+        const lead = body.firstElementChild;
+        return JSON.stringify({
+          title: ta.value,
+          expectedTag: secondTag,
+          firstTag: lead ? lead.tagName : null,
+          firstBlock: lead ? lead.innerText.trim().slice(0, 40) : ''
+        });
+      })()
+      ```
+
+      Check that `title` is the lifted line, that `firstBlock` is the document's next block, and that `firstTag` equals `expectedTag`. If the tags differ, the moved-up block kept the wrong type: tell the user which block it is, so they can fix it in the editor. A title the user gave goes into the field the same way, without lifting anything.
+   6. **Wait for the autosave** — poll until `.auto-save-time` shows a time, and note it changes after the title is set — then continue at Step 5: the note is now a `text` stage, and Step 5.1 lays it out.
 
 ### Step 5 — Click 下一步 so XHS renders the images
 
@@ -167,7 +284,9 @@ Then route by `--draft`:
           body: ((document.querySelector('.tiptap.ProseMirror') || {}).innerText || '').slice(0, 3000)
         }))()
         ```
-   3. **Click 一键排版.** If the note was laid out before (the user went 返回 from the card editor), say that its earlier template is replaced. Tag the button, then real-click it — by `[data-xhs-export="layout"]` or the `XHS-EXPORT-LAYOUT` label:
+   3. **Click 一键排版.** First, with `--review ask`, ask the user whether they want to change the note's contents in the 长文 text editor before it is laid out as cards — 一键排版 paginates the text exactly as it is now. If they do, tell them which browser and tab the note is open in, ask them to say when they are done, and do not touch the page meanwhile. Then poll the Step 3 snippet: `text` with a non-empty `title` or `bodyChars` above 0 → carry on here; `editor` → they laid it out themselves, so report the template, background and card count with the 1.5 snippet and continue at substep 2; `publish` → go to Step 6. Skip the question with `--review no`.
+
+      If the note was laid out before (the user went 返回 from the card editor), say that its earlier template is replaced. Tag the button, then real-click it — by `[data-xhs-export="layout"]` or the `XHS-EXPORT-LAYOUT` label:
 
       ```js
       (() => {
@@ -224,7 +343,10 @@ Then route by `--draft`:
 
       Tell the user the template, background and card count, then continue at substep 2.
    6. **The user lays it out.** Ask them to click 一键排版 and pick a template and background in the editor, and to say when they are done. Then poll the Step 3 snippet until the stage is `editor`, report the template and background with the 1.5 snippet, and continue at substep 2.
-2. Record the card count from the editor's own page labels, and tag the 下一步 button. The button renders a moment after the cards, so the snippet waits for it:
+2. **Offer a last edit before rendering.** With `--review ask`, ask the user whether they want to change the note's contents in the 长文 draft before XHS renders the images — 下一步 renders the cards exactly as they are now. Skip this with `--review no`.
+   - **No changes** → substep 3.
+   - **They want to edit** → tell them which browser and tab the note is open in, and that they can edit the text directly on the cards in the card editor, or go 返回 to the text editor — warning that coming back with 一键排版 may replace the template — and ask them to say when they are done. Do not touch the page meanwhile. Then poll the Step 3 snippet: `editor` → report the template, background and card count with the Step 5.1.5 snippet, and go to substep 3; `text` → go back to substep 1, which lays the note out again; `publish` → they clicked 下一步 themselves, so go to Step 6.
+3. Record the card count from the editor's own page labels, and tag the 下一步 button. The button renders a moment after the cards, so the snippet waits for it:
 
    ```js
    (async () => {
@@ -241,8 +363,8 @@ Then route by `--draft`:
    })()
    ```
 
-3. Click the tagged button with the driver's **real click** — by `[data-xhs-export="next"]` or by the `XHS-EXPORT-NEXT` label. Apart from 一键排版, the template and the background in substep 1, this is the only thing this skill clicks in the editors or on the publish page; never click 发布, 暂存离开 or 返回, and never change the template of a note that was already in the card editor.
-4. Poll until the publish page holds one finished image per card:
+4. Click the tagged button with the driver's **real click** — by `[data-xhs-export="next"]` or by the `XHS-EXPORT-NEXT` label. Apart from 一键排版, the template and the background in substep 1, this is the only thing this skill clicks in the editors or on the publish page; never click 发布, 暂存离开 or 返回, and never change the template of a note that was already in the card editor.
+5. Poll until the publish page holds one finished image per card:
 
    ```js
    (() => {
@@ -264,7 +386,7 @@ Read the note's title from the publish page (the Step 3 snippet's `title`, or th
 Start the receiver **in the background** — it keeps running until the export arrives:
 
 ```bash
-python3 <skill-dir>/scripts/script.py receive --output-dir "<output-dir>" --prefix "<prefix>"
+python3 <skill-dir>/scripts/script.py receive --output-dir "<output-dir>" --prefix "<prefix>" --aspects "<aspects>"
 ```
 
 Its first output line is `{"receiver_url": "...", "token": "..."}`. Read it before Step 7.
@@ -300,9 +422,9 @@ When the receiver exits, read its output — the manifest it also writes to `<ou
 
 Then check, and report any difference:
 
-1. `saved` equals the card count from Step 5 (or the image count from Step 3).
-2. Every image has the same `width` × `height` as the `sizes` Step 5 read from the page.
-3. Look at the first image (`<prefix>-1`) and confirm it is the note's cover card.
+1. `saved` equals the card count from Step 5 (or the image count from Step 3), and `images` holds one entry per card for each of `aspects`.
+2. Every `3:5` image has the same `width` × `height` as the `sizes` Step 5 read from the page; every `3:4` image has the same height and a width of height × 3 ÷ 4.
+3. Look at the first image of each aspect (`<prefix>-1`) and confirm it is the note's cover card; for `3:4`, also that the side bands match the card's background.
 
 ### Step 9 — Return the tab to Xiaohongshu
 
@@ -312,13 +434,18 @@ Navigate the tab back to `https://creator.xiaohongshu.com/publish/publish?from=m
 
 ```
 <output-dir>/
-├── <prefix>-1.jpg      # cover card
+├── <prefix>-1.jpg      # 3:5, as XHS rendered it — cover card
 ├── <prefix>-2.jpg
 ├── …
-└── manifest.json       # title, expected, saved, missing, and per image: index, path, format, width, height, bytes
+├── 3x4/                # 3:4, padded at the sides
+│   ├── <prefix>-1.jpg
+│   └── …
+└── manifest.json       # title, aspects, expected, saved, missing, and per image: index, aspect, path, format, width, height, bytes
 ```
 
-Report the folder, the number of images and their size, and that nothing was published.
+Only the folders for the aspects in `--aspects` are written: with `3:4` alone, the card files sit only in `3x4/`.
+
+Report the folder, the number of cards, each aspect's size, and that nothing was published.
 
 ## Gotchas
 
@@ -327,3 +454,4 @@ Report the folder, the number of images and their size, and that nothing was pub
 - The images are JPEG whatever the page calls them; the script names files by their real format.
 - The card editor renders cards lazily: `.editor-item-new` can count fewer cards than the note has. Count by the `.card-page` labels (`1/8` … `8/8`).
 - Opening a new blank 写长文 note and leaving it saves nothing to 草稿箱, so navigating away from a blank text editor is safe.
+- Leaving a 写长文 editor that holds content raises a "Leave site?" dialog, even after an autosave. When a step has to navigate away from one, use the driver's force option if it has one; a note already autosaved loses nothing.

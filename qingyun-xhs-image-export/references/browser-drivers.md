@@ -44,6 +44,7 @@ click, and a screenshot.
 | Run page JS, get the value | `javascript_tool` | `javascript_tool` | Playwright evaluation on `tab.playwright` | `bsk evaluate '<snippet>' --session <id>` |
 | Real click (on an element SKILL.md tagged, e.g. `XHS-EXPORT-NEXT` / `[data-xhs-export="next"]`) | `find` the label, then `computer` `left_click` with that ref | `find` the label, then `computer` `left_click` with that ref | locator `[data-xhs-export="…"]` `.click()` | `bsk click --selector '[data-xhs-export="…"]' --session <id>` |
 | Screenshot | `computer` `screenshot` | `computer` `screenshot` | the plugin's screenshot capability | `bsk screenshot --out <path> --session <id>` |
+| File into the tagged `<input type="file">` (`--import` only) | none — see its section | `find` `XHS-EXPORT-IMPORT-INPUT`, then `file_upload` with that ref and the file's absolute path | `waitForEvent("filechooser")`, click the input's locator, `chooser.setFiles([absPath])` | `bsk upload --selector '[data-xhs-export="import"]' --file <path> --session <id>` |
 | End | leave the tab on Xiaohongshu | close the tabs you created | close or release the tabs you opened or claimed | `bsk session stop <id>` |
 
 ## `claude-browser-pane` — Claude Code desktop app
@@ -67,6 +68,11 @@ is left alone.
 
 **Pitfalls.**
 
+- It has no file-upload action, so it cannot import a document itself (Step
+  4.6). Step 4.3 then offers the user to import it with 从文件导入 in the pane
+  themselves; for a hands-off import, use a driver that can upload (Claude in
+  Chrome, `bsk`) in a browser logged into Xiaohongshu — the new note then
+  lives in that browser's 草稿箱.
 - `<a download>` clicks produce no file anywhere on disk, and the page cannot
   reach `127.0.0.1` by `fetch`, XHR, image beacons or an iframe — which is why
   Step 7 hands the images over through `window.name`.
@@ -79,7 +85,8 @@ is left alone.
 
 **Setup gate.** Load the tools in one `ToolSearch` call —
 `select:mcp__claude-in-chrome__tabs_context_mcp,mcp__claude-in-chrome__tabs_create_mcp,mcp__claude-in-chrome__tabs_close_mcp,mcp__claude-in-chrome__navigate,mcp__claude-in-chrome__computer,mcp__claude-in-chrome__find,mcp__claude-in-chrome__javascript_tool`
-— and confirm `tabs_context_mcp` answers.
+(add `mcp__claude-in-chrome__file_upload` for `--import`) — and confirm
+`tabs_context_mcp` answers.
 
 **Browser not running.** With the browser closed the extension is offline:
 `tabs_context_mcp` fails and `list_connected_browsers` lists nothing. Start
